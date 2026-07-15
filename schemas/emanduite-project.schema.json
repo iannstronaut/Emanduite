@@ -1,0 +1,474 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "definitions": {
+    "AuthConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "databaseId": {
+          "type": "string"
+        },
+        "externalIdFieldId": {
+          "type": "string"
+        },
+        "identifierFieldId": {
+          "type": "string"
+        },
+        "passwordFieldId": {
+          "type": "string"
+        },
+        "userEntityId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "databaseId",
+        "externalIdFieldId",
+        "identifierFieldId",
+        "passwordFieldId",
+        "userEntityId"
+      ],
+      "type": "object"
+    },
+    "CanonicalType": {
+      "enum": [
+        "integer",
+        "real",
+        "decimal",
+        "boolean",
+        "text",
+        "bytes",
+        "date",
+        "dateTime",
+        "json",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "Capability": {
+      "enum": [
+        "read",
+        "create",
+        "update",
+        "delete",
+        "schema"
+      ],
+      "type": "string"
+    },
+    "Column": {
+      "additionalProperties": false,
+      "properties": {
+        "canonicalType": {
+          "$ref": "#/definitions/CanonicalType"
+        },
+        "defaultValue": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "nativeType": {
+          "type": "string"
+        },
+        "nullable": {
+          "type": "boolean"
+        },
+        "primaryKey": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "canonicalType",
+        "id",
+        "name",
+        "nativeType",
+        "nullable",
+        "primaryKey"
+      ],
+      "type": "object"
+    },
+    "ConnectionConfig": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "sqlite"
+              ],
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "path"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "database": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "server"
+              ],
+              "type": "string"
+            },
+            "port": {
+              "format": "uint16",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "username": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "database",
+            "host",
+            "kind",
+            "port",
+            "username"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DatabaseConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "items": {
+            "$ref": "#/definitions/Capability"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "connection": {
+          "$ref": "#/definitions/ConnectionConfig"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "#/definitions/DatabaseProvider"
+        },
+        "secretRef": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tables": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/Table"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "capabilities",
+        "connection",
+        "id",
+        "name",
+        "provider"
+      ],
+      "type": "object"
+    },
+    "DatabaseProvider": {
+      "enum": [
+        "sqlite",
+        "postgresql",
+        "mysql"
+      ],
+      "type": "string"
+    },
+    "Databases": {
+      "additionalProperties": false,
+      "properties": {
+        "main": {
+          "$ref": "#/definitions/DatabaseConfig"
+        },
+        "sides": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/DatabaseConfig"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "main"
+      ],
+      "type": "object"
+    },
+    "EntityConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "databaseId": {
+          "type": "string"
+        },
+        "fields": {
+          "additionalProperties": {
+            "$ref": "#/definitions/EntityFieldConfig"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "id": {
+          "type": "string"
+        },
+        "tableId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "databaseId",
+        "id",
+        "tableId"
+      ],
+      "type": "object"
+    },
+    "EntityFieldConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "columnId": {
+          "type": "string"
+        },
+        "control": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "showInList": {
+          "type": "boolean"
+        },
+        "showInView": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "columnId",
+        "control",
+        "id",
+        "showInList",
+        "showInView"
+      ],
+      "type": "object"
+    },
+    "ForeignKey": {
+      "additionalProperties": false,
+      "properties": {
+        "fromColumn": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "onDelete": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "onUpdate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toColumn": {
+          "type": "string"
+        },
+        "toTable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "fromColumn",
+        "id",
+        "toColumn",
+        "toTable"
+      ],
+      "type": "object"
+    },
+    "GeneratedWith": {
+      "additionalProperties": false,
+      "properties": {
+        "emanduite": {
+          "type": "string"
+        },
+        "template": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "emanduite",
+        "template"
+      ],
+      "type": "object"
+    },
+    "Index": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "unique": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "columns",
+        "id",
+        "name",
+        "unique"
+      ],
+      "type": "object"
+    },
+    "ResourceConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "resourceType": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "resourceType"
+      ],
+      "type": "object"
+    },
+    "Table": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/Column"
+          },
+          "type": "array"
+        },
+        "foreignKeys": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ForeignKey"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "indexes": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/Index"
+          },
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "auth": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/AuthConfig"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "databases": {
+      "$ref": "#/definitions/Databases"
+    },
+    "entities": {
+      "additionalProperties": {
+        "$ref": "#/definitions/EntityConfig"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "generatedWith": {
+      "$ref": "#/definitions/GeneratedWith"
+    },
+    "projectId": {
+      "type": "string"
+    },
+    "projectName": {
+      "type": "string"
+    },
+    "resources": {
+      "additionalProperties": {
+        "$ref": "#/definitions/ResourceConfig"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "schemaVersion": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "targetDirectory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "databases",
+    "generatedWith",
+    "projectId",
+    "projectName",
+    "schemaVersion"
+  ],
+  "title": "Blueprint",
+  "type": "object"
+}

@@ -1,1 +1,12 @@
 /docs/*
+!/docs/dev/
+!/docs/dev/Phase-1.md
+node_modules/
+/src-tauri/gen/
+target/
+dist/
+.env
+.env.*
+*.log
+*.tsbuildinfo
+.github/
