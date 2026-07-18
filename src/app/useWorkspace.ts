@@ -13,11 +13,12 @@ import type {
   WorkspaceView
 } from "../contracts/workspace";
 import * as api from "../lib/tauri";
+import type { MigrationPlan, SchemaOperation } from "../contracts/schema-editor";
 
 const fallbackInfo: AppInfo = {
   name: "Emanduite",
   version: "web-preview",
-  phase: "Phase 2 - Project Manager & Schema Explorer",
+  phase: "Phase 3 - Desktop Configuration Tools",
   blueprintSchemaVersion: 1,
   databaseProviders: ["sqlite"]
 };
@@ -118,6 +119,20 @@ export function useWorkspace() {
     setSaveState("dirty");
   }, []);
 
+  const commitBlueprint = useCallback((update: (current: BlueprintV1) => BlueprintV1) => {
+    if (!session) return;
+    const blueprint = update(session.blueprint);
+    void run(async () => {
+      const invalid = unwrap(await api.validateBlueprint(blueprint));
+      if (invalid.length) {
+        const first = invalid[0];
+        throw new Error(`${first.path}: ${first.message}`);
+      }
+      setSession((current) => current ? { ...current, blueprint } : current);
+      setSaveState("dirty");
+    });
+  }, [run, session]);
+
   useEffect(() => {
     if (!session || saveState !== "dirty") return;
     if (autosave.current) clearTimeout(autosave.current);
@@ -163,6 +178,26 @@ export function useWorkspace() {
     setView("schema"); return result;
   });
 
+  const planSchema = (operations: SchemaOperation[]) => run(async () => {
+    if (!session) return;
+    return unwrap(await api.planSqliteSchemaChanges(session.blueprint.databases.main, operations));
+  });
+
+  const applySchema = (plan: MigrationPlan, confirmationToken?: string | null) => run(async () => {
+    if (!session) return;
+    const applied = unwrap(await api.applySqliteSchemaPlan(plan.id, confirmationToken));
+    const result = unwrap(await api.introspectSqlite(session.blueprint.databases.main));
+    setDiagnostics(result.diagnostics);
+    updateBlueprint((blueprint) => ({
+      ...blueprint,
+      databases: {
+        ...blueprint.databases,
+        main: { ...blueprint.databases.main, tables: result.tables }
+      }
+    }));
+    return applied;
+  });
+
   const setLayout = useCallback((next: ExplorerLayout) => {
     setLayoutState(next);
     if (!session) return;
@@ -175,6 +210,7 @@ export function useWorkspace() {
   return {
     info, runtime, view, setView, session, recent, saveState, error, setError,
     connection, diagnostics, layout, setLayout, create, openProject, duplicate,
-    removeRecent, setSqlitePath, testConnection, introspect
+    removeRecent, setSqlitePath, testConnection, introspect, updateBlueprint, commitBlueprint,
+    planSchema, applySchema
   };
 }

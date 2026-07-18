@@ -31,7 +31,8 @@ const session: ProjectSession = {
         ]
       }
     },
-    entities: {}, resources: {}
+    entities: {}, resources: {}, roles: {}, menus: [], extensions: {},
+    global: { template: "default", settings: {} }
   }
 };
 

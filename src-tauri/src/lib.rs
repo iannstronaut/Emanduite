@@ -2,11 +2,12 @@ pub mod blueprint;
 pub mod commands;
 pub mod database;
 pub mod error;
+pub mod extension;
 pub mod logging;
 pub mod secret;
 pub mod workspace;
 
-use commands::SecretState;
+use commands::{MigrationState, SecretState};
 use secret::KeyringSecretStore;
 use tauri::Manager;
 use workspace::WorkspaceRepository;
@@ -24,6 +25,7 @@ pub fn run() {
             Ok(())
         })
         .manage(SecretState(KeyringSecretStore))
+        .manage(MigrationState::default())
         .invoke_handler(tauri::generate_handler![
             commands::get_app_info,
             commands::export_blueprint_schema,
@@ -36,6 +38,8 @@ pub fn run() {
             commands::delete_secret,
             commands::test_sqlite_connection,
             commands::introspect_sqlite,
+            commands::plan_sqlite_schema_changes,
+            commands::apply_sqlite_schema_plan,
             commands::create_project_command,
             commands::open_project_command,
             commands::save_project_command,
@@ -45,6 +49,9 @@ pub fn run() {
             commands::remove_recent_project,
             commands::get_explorer_layout,
             commands::save_explorer_layout,
+            commands::load_extension_file,
+            commands::validate_extension_file,
+            commands::save_extension_file,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Emanduite desktop workspace");

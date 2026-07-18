@@ -1,16 +1,20 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path, sync::Mutex};
 
 use serde::Serialize;
 use serde_json::Value;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::{
     blueprint::{
         blueprint_json_schema, load_blueprint, save_blueprint, validate_blueprint, Blueprint,
         DatabaseConfig, ValidationDiagnostic, CURRENT_SCHEMA_VERSION,
     },
-    database::{sqlite::SqliteAdapter, ConnectionStatus, DatabaseAdapter, IntrospectionResult},
+    database::{
+        sqlite::SqliteAdapter, ApplyResult, ConnectionStatus, DatabaseAdapter, IntrospectionResult,
+        MigrationPlan, SchemaOperation,
+    },
     error::{AppError, CommandResponse},
+    extension::{load_extension, save_extension, validate_extension, ExtensionDocument},
     secret::{KeyringSecretStore, SecretStore},
     workspace::{
         create_project, duplicate_project, open_project, save_project, ExplorerLayout,
@@ -19,6 +23,9 @@ use crate::{
 };
 
 pub struct SecretState(pub KeyringSecretStore);
+
+#[derive(Default)]
+pub struct MigrationState(pub Mutex<HashMap<String, (DatabaseConfig, MigrationPlan)>>);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,7 +54,7 @@ pub fn get_app_info() -> CommandResponse<AppInfo> {
     CommandResponse::from_result(Ok(AppInfo {
         name: "Emanduite",
         version: env!("CARGO_PKG_VERSION"),
-        phase: "Phase 2 - Project Manager & Schema Explorer",
+        phase: "Phase 3 - Desktop Configuration Tools",
         blueprint_schema_version: CURRENT_SCHEMA_VERSION,
         database_providers: ["sqlite"],
     }))
@@ -137,6 +144,53 @@ pub async fn introspect_sqlite(config: DatabaseConfig) -> CommandResponse<Intros
 }
 
 #[tauri::command]
+pub async fn plan_sqlite_schema_changes(
+    config: DatabaseConfig,
+    operations: Vec<SchemaOperation>,
+    app: tauri::AppHandle,
+) -> CommandResponse<MigrationPlan> {
+    let result = SqliteAdapter
+        .plan_schema_changes(&config, &operations)
+        .await;
+    if let Ok(plan) = &result {
+        let state = app.state::<MigrationState>();
+        match state.0.lock() {
+            Ok(mut plans) => {
+                plans.retain(|_, (existing, _)| existing.id != config.id);
+                plans.insert(plan.id.clone(), (config, plan.clone()));
+            }
+            Err(_) => return CommandResponse::from_result(Err(AppError::Internal)),
+        };
+    }
+    CommandResponse::from_result(result)
+}
+
+#[tauri::command]
+pub async fn apply_sqlite_schema_plan(
+    plan_id: String,
+    confirmation_token: Option<String>,
+    app: tauri::AppHandle,
+) -> CommandResponse<ApplyResult> {
+    let state = app.state::<MigrationState>();
+    let stored = match state.0.lock() {
+        Ok(plans) => plans.get(&plan_id).cloned(),
+        Err(_) => return CommandResponse::from_result(Err(AppError::Internal)),
+    };
+    let Some((config, plan)) = stored else {
+        return CommandResponse::from_result(Err(AppError::NotFound));
+    };
+    let result = SqliteAdapter
+        .apply_schema_changes(&config, &plan, confirmation_token.as_deref())
+        .await;
+    if result.is_ok() {
+        if let Ok(mut plans) = state.0.lock() {
+            plans.remove(&plan_id);
+        }
+    }
+    CommandResponse::from_result(result)
+}
+
+#[tauri::command]
 pub fn create_project_command(
     directory: String,
     name: String,
@@ -220,4 +274,43 @@ pub fn save_explorer_layout(
     state: State<'_, WorkspaceRepository>,
 ) -> CommandResponse<()> {
     CommandResponse::from_result(state.set_layout(&project_path, layout))
+}
+
+#[tauri::command]
+pub fn load_extension_file(
+    project_path: String,
+    relative_path: String,
+    language: String,
+) -> CommandResponse<ExtensionDocument> {
+    CommandResponse::from_result(load_extension(
+        Path::new(&project_path),
+        &relative_path,
+        &language,
+    ))
+}
+
+#[tauri::command]
+pub fn validate_extension_file(
+    relative_path: String,
+    language: String,
+    content: String,
+) -> CommandResponse<ExtensionDocument> {
+    CommandResponse::from_result(validate_extension(&relative_path, &language, content))
+}
+
+#[tauri::command]
+pub fn save_extension_file(
+    project_path: String,
+    relative_path: String,
+    language: String,
+    content: String,
+    format: bool,
+) -> CommandResponse<ExtensionDocument> {
+    CommandResponse::from_result(save_extension(
+        Path::new(&project_path),
+        &relative_path,
+        &language,
+        content,
+        format,
+    ))
 }

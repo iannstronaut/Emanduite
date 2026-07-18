@@ -112,6 +112,10 @@ fn backup_original(path: &Path, version: u32, bytes: &[u8]) -> Result<PathBuf, A
 
 #[cfg(test)]
 mod tests {
+    use crate::blueprint::{
+        ExtensionConfig, ExtensionOwnership, MenuItem, ResourceConfig, RoleConfig,
+    };
+
     use super::*;
 
     #[test]
@@ -121,6 +125,71 @@ mod tests {
         let blueprint = Blueprint::new_sqlite("Demo", "demo.db");
         save_blueprint(&path, &blueprint).unwrap();
         assert_eq!(load_blueprint(&path).unwrap(), blueprint);
+    }
+
+    #[test]
+    fn phase_three_configuration_round_trip_preserves_stable_references() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(BLUEPRINT_FILE);
+        let mut blueprint = Blueprint::new_sqlite("Configured", "configured.db");
+        let resource_id = Uuid::new_v4().to_string();
+        blueprint.resources.insert(
+            "users".into(),
+            ResourceConfig {
+                id: resource_id.clone(),
+                key: "users".into(),
+                resource_type: "entity".into(),
+                actions: ["read".into(), "export".into()].into_iter().collect(),
+            },
+        );
+        blueprint.roles.insert(
+            "admin".into(),
+            RoleConfig {
+                id: Uuid::new_v4().to_string(),
+                key: "admin".into(),
+                label: "Administrator".into(),
+                permissions: [(
+                    resource_id.clone(),
+                    ["read".into(), "export".into()].into_iter().collect(),
+                )]
+                .into_iter()
+                .collect(),
+            },
+        );
+        let parent_id = Uuid::new_v4().to_string();
+        blueprint.menus = vec![
+            MenuItem {
+                id: parent_id.clone(),
+                label: "Admin".into(),
+                resource_id: None,
+                parent_id: None,
+                order: 0,
+            },
+            MenuItem {
+                id: Uuid::new_v4().to_string(),
+                label: "Users".into(),
+                resource_id: Some(resource_id.clone()),
+                parent_id: Some(parent_id),
+                order: 1,
+            },
+        ];
+        blueprint.extensions.insert(
+            "users-hook".into(),
+            ExtensionConfig {
+                id: Uuid::new_v4().to_string(),
+                path: "users/hook.ts".into(),
+                language: "typescript".into(),
+                ownership: ExtensionOwnership::UserOwned,
+            },
+        );
+
+        save_blueprint(&path, &blueprint).unwrap();
+        let reopened = load_blueprint(&path).unwrap();
+        assert_eq!(reopened, blueprint);
+        assert_eq!(
+            reopened.menus[1].resource_id.as_deref(),
+            Some(resource_id.as_str())
+        );
     }
 
     #[test]

@@ -73,6 +73,16 @@ export interface AuthConfig {
   externalIdFieldId: string;
   identifierFieldId: string;
   passwordFieldId: string;
+  registrationPolicy: "disabled" | "inviteOnly" | "open";
+  passwordLogin: boolean;
+}
+
+export interface ValidationRule { kind: string; value?: unknown; message?: string; }
+export interface FieldOption { label: string; value: string; }
+export interface RelationDisplay {
+  targetEntityId: string;
+  displayFieldId: string;
+  missingBehavior: "empty" | "rawValue" | "error";
 }
 
 export interface EntityFieldConfig {
@@ -81,10 +91,16 @@ export interface EntityFieldConfig {
   control: string;
   showInList: boolean;
   showInView: boolean;
+  showInForm: boolean;
+  required: boolean;
+  validation: ValidationRule[];
+  options: FieldOption[];
+  relationDisplay?: RelationDisplay;
 }
 
 export interface EntityConfig {
   id: string;
+  label?: string;
   databaseId: string;
   tableId: string;
   fields: Record<string, EntityFieldConfig>;
@@ -94,6 +110,34 @@ export interface ResourceConfig {
   id: string;
   key: string;
   resourceType: string;
+  actions: string[];
+}
+
+export interface RoleConfig {
+  id: string;
+  key: string;
+  label: string;
+  permissions: Record<string, string[]>;
+}
+
+export interface MenuItem {
+  id: string;
+  label: string;
+  resourceId?: string;
+  parentId?: string;
+  order: number;
+}
+
+export interface ExtensionConfig {
+  id: string;
+  path: string;
+  language: string;
+  ownership: "userOwned";
+}
+
+export interface GlobalConfig {
+  template: string;
+  settings: Record<string, unknown>;
 }
 
 export interface BlueprintV1 {
@@ -106,4 +150,8 @@ export interface BlueprintV1 {
   auth?: AuthConfig;
   entities: Record<string, EntityConfig>;
   resources: Record<string, ResourceConfig>;
+  roles: Record<string, RoleConfig>;
+  menus: MenuItem[];
+  extensions: Record<string, ExtensionConfig>;
+  global: GlobalConfig;
 }

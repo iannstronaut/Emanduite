@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -22,6 +23,14 @@ pub struct Blueprint {
     pub entities: BTreeMap<String, EntityConfig>,
     #[serde(default)]
     pub resources: BTreeMap<String, ResourceConfig>,
+    #[serde(default)]
+    pub roles: BTreeMap<String, RoleConfig>,
+    #[serde(default)]
+    pub menus: Vec<MenuItem>,
+    #[serde(default)]
+    pub extensions: BTreeMap<String, ExtensionConfig>,
+    #[serde(default)]
+    pub global: GlobalConfig,
 }
 
 impl Blueprint {
@@ -60,6 +69,10 @@ impl Blueprint {
             auth: None,
             entities: BTreeMap::new(),
             resources: BTreeMap::new(),
+            roles: BTreeMap::new(),
+            menus: Vec::new(),
+            extensions: BTreeMap::new(),
+            global: GlobalConfig::default(),
         }
     }
 }
@@ -198,12 +211,27 @@ pub struct AuthConfig {
     pub external_id_field_id: String,
     pub identifier_field_id: String,
     pub password_field_id: String,
+    #[serde(default)]
+    pub registration_policy: RegistrationPolicy,
+    #[serde(default = "default_true")]
+    pub password_login: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RegistrationPolicy {
+    #[default]
+    Disabled,
+    InviteOnly,
+    Open,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EntityConfig {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub database_id: String,
     pub table_id: String,
     #[serde(default)]
@@ -218,6 +246,51 @@ pub struct EntityFieldConfig {
     pub control: String,
     pub show_in_list: bool,
     pub show_in_view: bool,
+    #[serde(default = "default_true")]
+    pub show_in_form: bool,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub validation: Vec<ValidationRule>,
+    #[serde(default)]
+    pub options: Vec<FieldOption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation_display: Option<RelationDisplay>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ValidationRule {
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldOption {
+    pub label: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RelationDisplay {
+    pub target_entity_id: String,
+    pub display_field_id: String,
+    #[serde(default)]
+    pub missing_behavior: MissingReferenceBehavior,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum MissingReferenceBehavior {
+    #[default]
+    Empty,
+    RawValue,
+    Error,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -226,4 +299,72 @@ pub struct ResourceConfig {
     pub id: String,
     pub key: String,
     pub resource_type: String,
+    #[serde(default)]
+    pub actions: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RoleConfig {
+    pub id: String,
+    pub key: String,
+    pub label: String,
+    #[serde(default)]
+    pub permissions: BTreeMap<String, BTreeSet<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuItem {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub order: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExtensionConfig {
+    pub id: String,
+    pub path: String,
+    pub language: String,
+    #[serde(default)]
+    pub ownership: ExtensionOwnership,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ExtensionOwnership {
+    #[default]
+    UserOwned,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GlobalConfig {
+    #[serde(default = "default_template")]
+    pub template: String,
+    #[serde(default)]
+    pub settings: BTreeMap<String, Value>,
+}
+
+impl Default for GlobalConfig {
+    fn default() -> Self {
+        Self {
+            template: default_template(),
+            settings: BTreeMap::new(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_template() -> String {
+    "default".into()
 }

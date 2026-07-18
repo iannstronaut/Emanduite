@@ -17,6 +17,18 @@
         "passwordFieldId": {
           "type": "string"
         },
+        "passwordLogin": {
+          "default": true,
+          "type": "boolean"
+        },
+        "registrationPolicy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/RegistrationPolicy"
+            }
+          ],
+          "default": "disabled"
+        },
         "userEntityId": {
           "type": "string"
         }
@@ -237,6 +249,12 @@
         "id": {
           "type": "string"
         },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "tableId": {
           "type": "string"
         }
@@ -260,11 +278,43 @@
         "id": {
           "type": "string"
         },
+        "options": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/FieldOption"
+          },
+          "type": "array"
+        },
+        "relationDisplay": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RelationDisplay"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required": {
+          "default": false,
+          "type": "boolean"
+        },
+        "showInForm": {
+          "default": true,
+          "type": "boolean"
+        },
         "showInList": {
           "type": "boolean"
         },
         "showInView": {
           "type": "boolean"
+        },
+        "validation": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/ValidationRule"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -273,6 +323,56 @@
         "id",
         "showInList",
         "showInView"
+      ],
+      "type": "object"
+    },
+    "ExtensionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "ownership": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ExtensionOwnership"
+            }
+          ],
+          "default": "userOwned"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "language",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ExtensionOwnership": {
+      "enum": [
+        "userOwned"
+      ],
+      "type": "string"
+    },
+    "FieldOption": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
       ],
       "type": "object"
     },
@@ -328,6 +428,21 @@
       ],
       "type": "object"
     },
+    "GlobalConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "settings": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        },
+        "template": {
+          "default": "default",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "Index": {
       "additionalProperties": false,
       "properties": {
@@ -355,9 +470,90 @@
       ],
       "type": "object"
     },
+    "MenuItem": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "order": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
+        "parentId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resourceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "MissingReferenceBehavior": {
+      "enum": [
+        "empty",
+        "rawValue",
+        "error"
+      ],
+      "type": "string"
+    },
+    "RegistrationPolicy": {
+      "enum": [
+        "disabled",
+        "inviteOnly",
+        "open"
+      ],
+      "type": "string"
+    },
+    "RelationDisplay": {
+      "additionalProperties": false,
+      "properties": {
+        "displayFieldId": {
+          "type": "string"
+        },
+        "missingBehavior": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/MissingReferenceBehavior"
+            }
+          ],
+          "default": "empty"
+        },
+        "targetEntityId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayFieldId",
+        "targetEntityId"
+      ],
+      "type": "object"
+    },
     "ResourceConfig": {
       "additionalProperties": false,
       "properties": {
+        "actions": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
         "id": {
           "type": "string"
         },
@@ -372,6 +568,37 @@
         "id",
         "key",
         "resourceType"
+      ],
+      "type": "object"
+    },
+    "RoleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "permissions": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "key",
+        "label"
       ],
       "type": "object"
     },
@@ -411,6 +638,25 @@
         "name"
       ],
       "type": "object"
+    },
+    "ValidationRule": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": true
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
     }
   },
   "properties": {
@@ -434,8 +680,33 @@
       "default": {},
       "type": "object"
     },
+    "extensions": {
+      "additionalProperties": {
+        "$ref": "#/definitions/ExtensionConfig"
+      },
+      "default": {},
+      "type": "object"
+    },
     "generatedWith": {
       "$ref": "#/definitions/GeneratedWith"
+    },
+    "global": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/GlobalConfig"
+        }
+      ],
+      "default": {
+        "settings": {},
+        "template": "default"
+      }
+    },
+    "menus": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/MenuItem"
+      },
+      "type": "array"
     },
     "projectId": {
       "type": "string"
@@ -446,6 +717,13 @@
     "resources": {
       "additionalProperties": {
         "$ref": "#/definitions/ResourceConfig"
+      },
+      "default": {},
+      "type": "object"
+    },
+    "roles": {
+      "additionalProperties": {
+        "$ref": "#/definitions/RoleConfig"
       },
       "default": {},
       "type": "object"

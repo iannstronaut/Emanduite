@@ -18,6 +18,8 @@ pub enum AppError {
     Validation,
     #[error("resource not found")]
     NotFound,
+    #[error("resource changed since it was read")]
+    Conflict,
     #[error("file operation failed")]
     Io(#[from] std::io::Error),
     #[error("database operation failed")]
@@ -39,6 +41,7 @@ impl AppError {
         match self {
             Self::Validation => "VALIDATION_ERROR",
             Self::NotFound => "NOT_FOUND",
+            Self::Conflict => "CONFLICT",
             Self::Io(_) => "IO_ERROR",
             Self::Database(_) => "DATABASE_ERROR",
             Self::SecretStore => "SECRET_STORE_ERROR",

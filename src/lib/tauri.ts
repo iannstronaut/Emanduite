@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { BlueprintV1, DatabaseConfig } from "../contracts/blueprint";
-import type { AppInfo, CommandResponse } from "../contracts/commands";
+import type { AppInfo, CommandResponse, ValidationDiagnostic } from "../contracts/commands";
 import type {
   ConnectionStatus,
   CreateProjectInput,
@@ -11,6 +11,7 @@ import type {
   ProjectSession,
   RecentProject
 } from "../contracts/workspace";
+import type { ApplyResult, ExtensionDocument, MigrationPlan, SchemaOperation } from "../contracts/schema-editor";
 
 const command = <T>(name: string, args?: Record<string, unknown>) =>
   invoke<CommandResponse<T>>(name, args);
@@ -24,6 +25,8 @@ export const openProject = (path: string) =>
   command<ProjectSession>("open_project_command", { path });
 export const saveProject = (path: string, blueprint: BlueprintV1) =>
   command<ProjectSession>("save_project_command", { path, blueprint });
+export const validateBlueprint = (blueprint: BlueprintV1) =>
+  command<ValidationDiagnostic[]>("validate_blueprint_command", { value: blueprint });
 export const duplicateProject = (input: DuplicateProjectInput) =>
   command<ProjectSession>("duplicate_project_command", { ...input });
 export const removeRecentProject = (path: string) =>
@@ -32,10 +35,20 @@ export const testSqliteConnection = (config: DatabaseConfig) =>
   command<ConnectionStatus>("test_sqlite_connection", { config });
 export const introspectSqlite = (config: DatabaseConfig) =>
   command<IntrospectionResult>("introspect_sqlite", { config });
+export const planSqliteSchemaChanges = (config: DatabaseConfig, operations: SchemaOperation[]) =>
+  command<MigrationPlan>("plan_sqlite_schema_changes", { config, operations });
+export const applySqliteSchemaPlan = (planId: string, confirmationToken?: string | null) =>
+  command<ApplyResult>("apply_sqlite_schema_plan", { planId, confirmationToken: confirmationToken ?? null });
 export const getExplorerLayout = (projectPath: string) =>
   command<ExplorerLayout>("get_explorer_layout", { projectPath });
 export const saveExplorerLayout = (projectPath: string, layout: ExplorerLayout) =>
   command<void>("save_explorer_layout", { projectPath, layout });
+export const loadExtensionFile = (projectPath: string, relativePath: string, language: string) =>
+  command<ExtensionDocument>("load_extension_file", { projectPath, relativePath, language });
+export const validateExtensionFile = (relativePath: string, language: string, content: string) =>
+  command<ExtensionDocument>("validate_extension_file", { relativePath, language, content });
+export const saveExtensionFile = (projectPath: string, relativePath: string, language: string, content: string, format: boolean) =>
+  command<ExtensionDocument>("save_extension_file", { projectPath, relativePath, language, content, format });
 
 export async function selectProjectDirectory(): Promise<string | null> {
   const result = await open({ directory: true, multiple: false, title: "Select project directory" });
