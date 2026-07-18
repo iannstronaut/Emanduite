@@ -1,8 +1,9 @@
 # Emanduite
 
-Desktop-first RAD workspace untuk merancang proyek admin panel. Fase pertama
-berfokus pada Tauri, Blueprint v1, secure secret boundary, dan SQLite; generator
-Next.js dikerjakan setelah fondasi desktop stabil.
+Desktop-first RAD workspace untuk merancang proyek admin panel. Fase kedua
+menyediakan Project Manager, SQLite Connection Manager, canonical introspection,
+autosave/reopen, dan Schema Explorer read-only. Generator Next.js dikerjakan
+setelah fondasi desktop stabil.
 
 ## Development
 
@@ -17,8 +18,10 @@ Quality gate lokal:
 
 ```powershell
 npm run phase1:check
+npm run phase2:check
 cargo clippy --manifest-path .\src-tauri\Cargo.toml --all-targets -- -D warnings
 npm run tauri -- build --no-bundle
 ```
 
-Konteks implementasi lengkap tersedia di `docs/dev/Phase-1.md`.
+Konteks implementasi tersedia di `docs/dev/Phase-1.md` dan
+`docs/dev/Phase-2.md`.

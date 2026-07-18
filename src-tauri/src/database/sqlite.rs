@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use async_trait::async_trait;
 use sqlx::{
@@ -39,21 +39,52 @@ impl DatabaseAdapter for SqliteAdapter {
         require_read(config)?;
         let (pool, _) = connect(config).await?;
         let namespace = Uuid::parse_str(&config.id).map_err(|_| AppError::Validation)?;
-        let table_rows = sqlx::query("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetch_all(&pool).await?;
+        let table_rows = sqlx::query("SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetch_all(&pool).await?;
         let mut tables = Vec::new();
         let mut diagnostics = Vec::new();
         for row in table_rows {
             let name: String = row.try_get("name")?;
+            let create_sql: Option<String> = row.try_get("sql")?;
+            if let Some(sql) = create_sql {
+                let upper = sql.to_ascii_uppercase();
+                if upper.contains("WITHOUT ROWID") {
+                    diagnostics.push(DatabaseDiagnostic {
+                        code: "sqlite_without_rowid".into(),
+                        object: name.clone(),
+                        message: "WITHOUT ROWID is preserved by SQLite but has no canonical flag"
+                            .into(),
+                    });
+                }
+                if upper.contains(" STRICT") {
+                    diagnostics.push(DatabaseDiagnostic {
+                        code: "sqlite_strict_table".into(),
+                        object: name.clone(),
+                        message: "STRICT table mode is provider metadata in Phase 2".into(),
+                    });
+                }
+            }
             let table_id = stable_id(&namespace, &format!("table:{name}"));
             let columns = introspect_columns(&pool, &namespace, &name, &mut diagnostics).await?;
             let foreign_keys = introspect_foreign_keys(&pool, &namespace, &name).await?;
-            let indexes = introspect_indexes(&pool, &namespace, &name).await?;
+            let indexes = introspect_indexes(&pool, &namespace, &name, &mut diagnostics).await?;
             tables.push(Table {
                 id: table_id,
                 name,
                 columns,
                 foreign_keys,
                 indexes,
+            });
+        }
+        let view_rows =
+            sqlx::query("SELECT name FROM sqlite_schema WHERE type = 'view' ORDER BY name")
+                .fetch_all(&pool)
+                .await?;
+        for row in view_rows {
+            let name: String = row.try_get("name")?;
+            diagnostics.push(DatabaseDiagnostic {
+                code: "sqlite_view_read_only".into(),
+                object: name,
+                message: "Views are detected but are not canonical editable tables".into(),
             });
         }
         pool.close().await;
@@ -91,7 +122,13 @@ async fn connect(config: &DatabaseConfig) -> Result<(SqlitePool, PathBuf), AppEr
 }
 
 pub fn validate_existing_sqlite_path(path: &Path) -> Result<PathBuf, AppError> {
-    if path.as_os_str().is_empty() || path.to_string_lossy().contains('\0') {
+    if !path.is_absolute()
+        || path.as_os_str().is_empty()
+        || path.to_string_lossy().contains('\0')
+        || path
+            .components()
+            .any(|component| component == Component::ParentDir)
+    {
         return Err(AppError::InvalidPath);
     }
     let canonical = path.canonicalize().map_err(|_| AppError::InvalidPath)?;
@@ -107,7 +144,7 @@ async fn introspect_columns(
     table: &str,
     diagnostics: &mut Vec<DatabaseDiagnostic>,
 ) -> Result<Vec<Column>, AppError> {
-    let query = format!("PRAGMA table_info({})", quote_identifier(table));
+    let query = format!("PRAGMA table_xinfo({})", quote_identifier(table));
     let rows = sqlx::query(&query).fetch_all(pool).await?;
     let mut columns = Vec::new();
     for row in rows {
@@ -125,6 +162,14 @@ async fn introspect_columns(
         }
         let not_null: i64 = row.try_get("notnull")?;
         let primary_key: i64 = row.try_get("pk")?;
+        let hidden: i64 = row.try_get("hidden")?;
+        if hidden != 0 {
+            diagnostics.push(DatabaseDiagnostic {
+                code: "sqlite_generated_column".into(),
+                object: format!("{table}.{name}"),
+                message: "Generated/hidden column is read-only provider metadata".into(),
+            });
+        }
         columns.push(Column {
             id: stable_id(namespace, &format!("table:{table}:column:{name}")),
             name,
@@ -172,6 +217,7 @@ async fn introspect_indexes(
     pool: &SqlitePool,
     namespace: &Uuid,
     table: &str,
+    diagnostics: &mut Vec<DatabaseDiagnostic>,
 ) -> Result<Vec<Index>, AppError> {
     let rows = sqlx::query(&format!("PRAGMA index_list({})", quote_identifier(table)))
         .fetch_all(pool)
@@ -180,12 +226,30 @@ async fn introspect_indexes(
     for row in rows {
         let name: String = row.try_get("name")?;
         let unique: i64 = row.try_get("unique")?;
+        let partial: i64 = row.try_get("partial")?;
+        if partial != 0 {
+            diagnostics.push(DatabaseDiagnostic {
+                code: "sqlite_partial_index".into(),
+                object: format!("{table}.{name}"),
+                message: "Partial index predicate is not represented in the canonical model".into(),
+            });
+        }
         let column_rows = sqlx::query(&format!("PRAGMA index_info({})", quote_identifier(&name)))
             .fetch_all(pool)
             .await?;
         let mut columns = Vec::new();
         for column in column_rows {
-            columns.push(column.try_get::<String, _>("name")?);
+            let column_name: Option<String> = column.try_get("name")?;
+            if let Some(column_name) = column_name {
+                columns.push(column_name);
+            } else {
+                diagnostics.push(DatabaseDiagnostic {
+                    code: "sqlite_expression_index".into(),
+                    object: format!("{table}.{name}"),
+                    message: "Expression index term is not represented as a canonical column"
+                        .into(),
+                });
+            }
         }
         values.push(Index {
             id: stable_id(namespace, &format!("table:{table}:index:{name}")),
@@ -245,7 +309,7 @@ mod tests {
         let mut connection = sqlx::SqliteConnection::connect_with(&options)
             .await
             .unwrap();
-        sqlx::query("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE); CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT DEFAULT 'draft', FOREIGN KEY(user_id) REFERENCES users(id)); CREATE INDEX posts_title_idx ON posts(title);").execute(&mut connection).await.unwrap();
+        sqlx::query("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, profile JSON, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP); CREATE TABLE posts (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, title TEXT DEFAULT 'draft', rating DECIMAL(5,2), payload BLOB, slug TEXT GENERATED ALWAYS AS (lower(title)) STORED, FOREIGN KEY(user_id) REFERENCES users(id) ON UPDATE CASCADE ON DELETE CASCADE); CREATE INDEX posts_title_idx ON posts(title, rating); CREATE INDEX posts_positive_rating_idx ON posts(rating) WHERE rating > 0; CREATE VIEW post_titles AS SELECT id, title FROM posts;").execute(&mut connection).await.unwrap();
         connection.close().await.unwrap();
         let blueprint = Blueprint::new_sqlite("Fixture", path.to_string_lossy());
         (directory, blueprint.databases.main)
@@ -268,6 +332,29 @@ mod tests {
             .indexes
             .iter()
             .any(|index| index.name == "posts_title_idx"));
+        assert_eq!(
+            posts
+                .columns
+                .iter()
+                .find(|column| column.name == "rating")
+                .unwrap()
+                .canonical_type,
+            CanonicalType::Decimal
+        );
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|item| item.code == "sqlite_generated_column"));
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|item| item.code == "sqlite_partial_index"));
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|item| item.code == "sqlite_view_read_only"));
+        let repeated = SqliteAdapter.introspect(&config).await.unwrap();
+        assert_eq!(result.tables, repeated.tables);
     }
 
     #[tokio::test]
@@ -277,6 +364,14 @@ mod tests {
         assert!(matches!(
             SqliteAdapter.test_connection(&config).await,
             Err(AppError::CapabilityDenied)
+        ));
+    }
+
+    #[test]
+    fn rejects_relative_sqlite_path() {
+        assert!(matches!(
+            validate_existing_sqlite_path(Path::new("fixture.sqlite")),
+            Err(AppError::InvalidPath)
         ));
     }
 }

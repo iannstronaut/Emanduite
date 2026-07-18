@@ -12,6 +12,10 @@ use crate::{
     database::{sqlite::SqliteAdapter, ConnectionStatus, DatabaseAdapter, IntrospectionResult},
     error::{AppError, CommandResponse},
     secret::{KeyringSecretStore, SecretStore},
+    workspace::{
+        create_project, duplicate_project, open_project, save_project, ExplorerLayout,
+        ProjectSession, RecentProject, WorkspaceRepository,
+    },
 };
 
 pub struct SecretState(pub KeyringSecretStore);
@@ -43,7 +47,7 @@ pub fn get_app_info() -> CommandResponse<AppInfo> {
     CommandResponse::from_result(Ok(AppInfo {
         name: "Emanduite",
         version: env!("CARGO_PKG_VERSION"),
-        phase: "Phase 1 - Desktop Foundation",
+        phase: "Phase 2 - Project Manager & Schema Explorer",
         blueprint_schema_version: CURRENT_SCHEMA_VERSION,
         database_providers: ["sqlite"],
     }))
@@ -130,4 +134,90 @@ pub async fn test_sqlite_connection(config: DatabaseConfig) -> CommandResponse<C
 #[tauri::command]
 pub async fn introspect_sqlite(config: DatabaseConfig) -> CommandResponse<IntrospectionResult> {
     CommandResponse::from_result(SqliteAdapter.introspect(&config).await)
+}
+
+#[tauri::command]
+pub fn create_project_command(
+    directory: String,
+    name: String,
+    sqlite_path: String,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<ProjectSession> {
+    CommandResponse::from_result(create_project(
+        &state,
+        Path::new(&directory),
+        &name,
+        Path::new(&sqlite_path),
+    ))
+}
+
+#[tauri::command]
+pub fn open_project_command(
+    path: String,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<ProjectSession> {
+    CommandResponse::from_result(open_project(&state, Path::new(&path)))
+}
+
+#[tauri::command]
+pub fn save_project_command(
+    path: String,
+    blueprint: Blueprint,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<ProjectSession> {
+    CommandResponse::from_result(save_project(&state, Path::new(&path), &blueprint))
+}
+
+#[tauri::command]
+pub fn duplicate_project_command(
+    source_path: String,
+    target_directory: String,
+    name: String,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<ProjectSession> {
+    CommandResponse::from_result(duplicate_project(
+        &state,
+        Path::new(&source_path),
+        Path::new(&target_directory),
+        &name,
+    ))
+}
+
+#[tauri::command]
+pub fn list_recent_projects(
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<Vec<RecentProject>> {
+    CommandResponse::from_result(state.recent_projects())
+}
+
+#[tauri::command]
+pub fn get_active_project_path(
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<Option<String>> {
+    CommandResponse::from_result(state.active_project_path())
+}
+
+#[tauri::command]
+pub fn remove_recent_project(
+    path: String,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<()> {
+    CommandResponse::from_result(state.remove_reference(&path))
+}
+
+#[tauri::command]
+pub fn get_explorer_layout(
+    project_path: String,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<ExplorerLayout> {
+    CommandResponse::from_result(state.layout(&project_path))
+}
+
+#[tauri::command]
+pub fn save_explorer_layout(
+    project_path: String,
+    layout: ExplorerLayout,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<()> {
+    CommandResponse::from_result(state.set_layout(&project_path, layout))
 }

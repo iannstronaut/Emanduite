@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Minimum core capability for the main workspace window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:allow-open"]
 }

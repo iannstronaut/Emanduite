@@ -11,12 +11,14 @@
     "test:watch": "vitest",
     "check": "npm run test && npm run build",
     "tauri": "tauri",
-    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --target-dir src-tauri/target/phase1-tests",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --target-dir src-tauri/target/phase2-tests",
     "schema:export": "cargo run --manifest-path src-tauri/Cargo.toml --bin export-schema -- schemas/emanduite-project.schema.json",
-    "phase1:check": "npm run check && npm run test:rust"
+    "phase1:check": "npm run check && npm run test:rust",
+    "phase2:check": "npm run check && npm run test:rust"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

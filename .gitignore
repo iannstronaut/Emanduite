@@ -1,6 +1,7 @@
 /docs/*
 !/docs/dev/
 !/docs/dev/Phase-1.md
+!/docs/dev/Phase-2.md
 node_modules/
 /src-tauri/gen/
 target/
