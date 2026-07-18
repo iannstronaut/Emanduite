@@ -48,6 +48,6 @@ export interface DuplicateProjectInput {
 }
 
 export type SaveState = "saved" | "dirty" | "saving" | "error";
-export type WorkspaceView = "projects" | "database" | "schema" | "editor" | "entities" | "permissions" | "auth" | "extensions" | "global";
+export type WorkspaceView = "projects" | "database" | "schema" | "editor" | "entities" | "permissions" | "auth" | "extensions" | "global" | "workflow";
 
 export type DatabaseConnection = DatabaseConfig;

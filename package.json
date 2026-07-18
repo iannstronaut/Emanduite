@@ -15,7 +15,8 @@
     "schema:export": "cargo run --manifest-path src-tauri/Cargo.toml --bin export-schema -- schemas/emanduite-project.schema.json",
     "phase1:check": "npm run check && npm run test:rust",
     "phase2:check": "npm run check && npm run test:rust",
-    "phase3:check": "npm run check && npm run test:rust"
+    "phase3:check": "npm run check && npm run test:rust",
+    "phase4:check": "npm run check && npm run test:rust"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

@@ -19,7 +19,11 @@ pub fn save_blueprint(path: &Path, blueprint: &Blueprint) -> Result<(), AppError
         return Err(AppError::Validation);
     }
     let bytes = serde_json::to_vec_pretty(blueprint).map_err(|_| AppError::Internal)?;
-    transactional_write(path, &bytes)
+    transactional_write(path, &bytes)?;
+    if persist_recovery_snapshot(path, &bytes).is_err() {
+        tracing::warn!("unable to update the last-known-good blueprint snapshot");
+    }
+    Ok(())
 }
 
 pub fn load_blueprint(path: &Path) -> Result<Blueprint, AppError> {
@@ -56,6 +60,44 @@ pub fn validate_blueprint_path(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+pub fn recovery_snapshot_path(path: &Path) -> Result<PathBuf, AppError> {
+    validate_blueprint_path(path)?;
+    Ok(path
+        .parent()
+        .ok_or(AppError::InvalidPath)?
+        .join(".recovery/last-known-good.json"))
+}
+
+pub fn load_recovery_snapshot(path: &Path) -> Result<Blueprint, AppError> {
+    let snapshot = recovery_snapshot_path(path)?;
+    parse_blueprint_bytes(&fs::read(snapshot)?)
+}
+
+pub fn recover_blueprint(path: &Path) -> Result<Blueprint, AppError> {
+    validate_blueprint_path(path)?;
+    let blueprint = load_recovery_snapshot(path)?;
+    let parent = path.parent().ok_or(AppError::InvalidPath)?;
+    let archive_dir = parent.join(".recovery/corrupt");
+    fs::create_dir_all(&archive_dir)?;
+    if path.exists() {
+        let stamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+        fs::copy(path, archive_dir.join(format!("blueprint-{stamp}.json")))?;
+    }
+    save_blueprint(path, &blueprint)?;
+    Ok(blueprint)
+}
+
+fn parse_blueprint_bytes(bytes: &[u8]) -> Result<Blueprint, AppError> {
+    let value = serde_json::from_slice(bytes).map_err(|_| AppError::Validation)?;
+    let outcome = migrate_value(value)?;
+    let blueprint: Blueprint =
+        serde_json::from_value(outcome.value).map_err(|_| AppError::Validation)?;
+    if !validate_blueprint(&blueprint).is_empty() {
+        return Err(AppError::Validation);
+    }
+    Ok(blueprint)
+}
+
 fn transactional_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     let parent = path.parent().ok_or(AppError::InvalidPath)?;
     fs::create_dir_all(parent)?;
@@ -89,6 +131,34 @@ fn transactional_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
         let _ = fs::remove_file(temp);
     }
     result
+}
+
+fn persist_recovery_snapshot(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
+    let snapshot = recovery_snapshot_path(path)?;
+    let parent = snapshot.parent().ok_or(AppError::InvalidPath)?;
+    fs::create_dir_all(parent)?;
+    let temp = parent.join(format!(".last-known-good.{}.tmp", Uuid::new_v4()));
+    let previous = parent.join(".last-known-good.previous");
+    let mut file = fs::File::create(&temp)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    if previous.exists() {
+        fs::remove_file(&previous)?;
+    }
+    if snapshot.exists() {
+        fs::rename(&snapshot, &previous)?;
+    }
+    if let Err(error) = fs::rename(&temp, &snapshot) {
+        if previous.exists() {
+            let _ = fs::rename(&previous, &snapshot);
+        }
+        let _ = fs::remove_file(&temp);
+        return Err(AppError::Io(error));
+    }
+    if previous.exists() {
+        fs::remove_file(previous)?;
+    }
+    Ok(())
 }
 
 fn recover_interrupted_save(path: &Path) -> Result<(), AppError> {
@@ -205,6 +275,24 @@ mod tests {
         assert_eq!(loaded.schema_version, 1);
         assert_eq!(
             fs::read_dir(directory.path().join(".backups"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn corrupt_blueprint_recovers_from_last_known_good_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(BLUEPRINT_FILE);
+        let blueprint = Blueprint::new_sqlite("Recovery", "recovery.db");
+        save_blueprint(&path, &blueprint).unwrap();
+        fs::write(&path, b"{corrupt").unwrap();
+        assert!(matches!(load_blueprint(&path), Err(AppError::Validation)));
+        assert_eq!(recover_blueprint(&path).unwrap(), blueprint);
+        assert_eq!(load_blueprint(&path).unwrap(), blueprint);
+        assert_eq!(
+            fs::read_dir(directory.path().join(".recovery/corrupt"))
                 .unwrap()
                 .count(),
             1

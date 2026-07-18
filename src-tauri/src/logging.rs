@@ -10,12 +10,16 @@ const SENSITIVE_KEYS: &[&str] = &[
 
 pub fn redact_text(input: &str) -> String {
     let mut output = input.to_owned();
+    redact_bearer_tokens(&mut output);
     for key in SENSITIVE_KEYS {
         for separator in ['=', ':'] {
             let marker = format!("{key}{separator}");
-            let lowercase = output.to_lowercase();
             let mut offset = 0;
-            while let Some(relative) = lowercase[offset..].find(&marker) {
+            loop {
+                let lowercase = output.to_lowercase();
+                let Some(relative) = lowercase[offset..].find(&marker) else {
+                    break;
+                };
                 let start = offset + relative + marker.len();
                 let end = output[start..]
                     .find(|c: char| c.is_whitespace() || c == ',' || c == '&')
@@ -27,6 +31,24 @@ pub fn redact_text(input: &str) -> String {
         }
     }
     output
+}
+
+fn redact_bearer_tokens(output: &mut String) {
+    let marker = "bearer ";
+    let mut offset = 0;
+    loop {
+        let lowercase = output.to_lowercase();
+        let Some(relative) = lowercase[offset..].find(marker) else {
+            break;
+        };
+        let start = offset + relative + marker.len();
+        let end = output[start..]
+            .find(|c: char| c.is_whitespace() || c == ',' || c == '&')
+            .map(|value| start + value)
+            .unwrap_or(output.len());
+        output.replace_range(start..end, "[REDACTED]");
+        offset = start + "[REDACTED]".len();
+    }
 }
 
 pub fn init() {
@@ -43,9 +65,13 @@ mod tests {
 
     #[test]
     fn redacts_common_secret_shapes() {
-        let value = redact_text("password=hunter2 token:abc123 user=demo");
+        let value = redact_text(
+            "password=hunter2 token:abc123 password=second authorization:Bearer live-token user=demo",
+        );
         assert!(!value.contains("hunter2"));
         assert!(!value.contains("abc123"));
+        assert!(!value.contains("second"));
+        assert!(!value.contains("live-token"));
         assert!(value.contains("user=demo"));
     }
 }

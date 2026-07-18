@@ -8,6 +8,7 @@ import { selectBlueprintFile } from "../lib/tauri";
 import { SchemaEditor } from "./SchemaEditor";
 import { AuthEditor, EntityEditor, GlobalEditor, PermissionEditor } from "./ConfigEditors";
 import { ExtensionEditor } from "./ExtensionEditor";
+import { WorkflowPanel } from "./WorkflowPanel";
 
 export function App() {
   return <ErrorBoundary><Workspace /></ErrorBoundary>;
@@ -46,6 +47,7 @@ function Workspace() {
       <button className={workspace.view === "auth" ? "nav-item active" : "nav-item"} aria-label="Authentication" disabled={!workspace.session} onClick={() => workspace.setView("auth")}><b>AU</b><span>Auth</span></button>
       <button className={workspace.view === "extensions" ? "nav-item active" : "nav-item"} aria-label="Extensions" disabled={!workspace.session} onClick={() => workspace.setView("extensions")}><b>EX</b><span>Extend</span></button>
       <button className={workspace.view === "global" ? "nav-item active" : "nav-item"} aria-label="Global config" disabled={!workspace.session} onClick={() => workspace.setView("global")}><b>GL</b><span>Global</span></button>
+      <button className={workspace.view === "workflow" ? "nav-item active" : "nav-item"} aria-label="Workflows and diagnostics" disabled={!workspace.session} onClick={() => workspace.setView("workflow")}><b>WF</b><span>Operate</span></button>
     </aside>
     <section className="content">
       {workspace.error && <div className="error-banner" role="alert"><span>{workspace.error}</span><button onClick={() => workspace.setError(null)}>Dismiss</button></div>}
@@ -58,8 +60,9 @@ function Workspace() {
       {workspace.view === "auth" && workspace.session && <AuthEditor key={`${workspace.session.path}-auth`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
       {workspace.view === "extensions" && workspace.session && <ExtensionEditor key={`${workspace.session.path}-extensions`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
       {workspace.view === "global" && workspace.session && <GlobalEditor key={`${workspace.session.path}-global`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
+      {workspace.view === "workflow" && workspace.session && <WorkflowPanel key={`${workspace.session.path}-workflow`} session={workspace.session} onRecover={workspace.recover} />}
     </section>
     <footer className="statusbar"><span>{workspace.info.name} {workspace.info.version}</span><span className="status-separator" /><span>{workspace.session ? workspace.session.path : "No project open"}</span><span className="status-spacer" /><span className={`save-state ${workspace.saveState}`}><i />{workspace.saveState}</span><span className="connected-dot" /><span>{workspace.runtime}</span></footer>
-      {palette && <div className="palette-backdrop" onMouseDown={() => setPalette(false)}><section className="command-palette" role="dialog" aria-label="Command palette" onMouseDown={(event) => event.stopPropagation()}><header><span>Run command</span><kbd>ESC</kbd></header><button onClick={() => { workspace.setView("projects"); setPalette(false); }}><b>Project: Show manager</b><span>Recent, create, duplicate</span></button><button onClick={() => { void openFromDisk(); }}><b>Project: Open from disk</b><span>Select emanduite-project.json</span></button><button disabled={!workspace.session} onClick={() => { workspace.setView("database"); setPalette(false); }}><b>Database: Connection manager</b><span>Test or introspect SQLite</span></button><button disabled={!workspace.session} onClick={() => { workspace.setView("schema"); setPalette(false); }}><b>Schema: Open explorer</b><span>Read-only ERD</span></button></section></div>}
+      {palette && <div className="palette-backdrop" onMouseDown={() => setPalette(false)}><section className="command-palette" role="dialog" aria-label="Command palette" onMouseDown={(event) => event.stopPropagation()}><header><span>Run command</span><kbd>ESC</kbd></header><button onClick={() => { workspace.setView("projects"); setPalette(false); }}><b>Project: Show manager</b><span>Recent, create, duplicate</span></button><button onClick={() => { void openFromDisk(); }}><b>Project: Open from disk</b><span>Select emanduite-project.json</span></button><button disabled={!workspace.session} onClick={() => { workspace.setView("database"); setPalette(false); }}><b>Database: Connection manager</b><span>Test or introspect SQLite</span></button><button disabled={!workspace.session} onClick={() => { workspace.setView("schema"); setPalette(false); }}><b>Schema: Open explorer</b><span>Read-only ERD</span></button><button disabled={!workspace.session} onClick={() => { workspace.setView("workflow"); setPalette(false); }}><b>Operate: Workflows and diagnostics</b><span>Run, monitor, recover, export support</span></button></section></div>}
   </main>;
 }

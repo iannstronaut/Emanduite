@@ -6,8 +6,9 @@ use tauri::{Manager, State};
 
 use crate::{
     blueprint::{
-        blueprint_json_schema, load_blueprint, save_blueprint, validate_blueprint, Blueprint,
-        DatabaseConfig, ValidationDiagnostic, CURRENT_SCHEMA_VERSION,
+        blueprint_json_schema, load_blueprint, recover_blueprint, save_blueprint,
+        validate_blueprint, Blueprint, DatabaseConfig, ValidationDiagnostic,
+        CURRENT_SCHEMA_VERSION,
     },
     database::{
         sqlite::SqliteAdapter, ApplyResult, ConnectionStatus, DatabaseAdapter, IntrospectionResult,
@@ -15,7 +16,12 @@ use crate::{
     },
     error::{AppError, CommandResponse},
     extension::{load_extension, save_extension, validate_extension, ExtensionDocument},
+    recovery::{diagnose_project, export_support_bundle, ProjectHealth},
     secret::{KeyringSecretStore, SecretStore},
+    workflow::{
+        cancel_workflow, start_workflow, workflow_definitions, WorkflowDefinition, WorkflowState,
+        WorkflowTask,
+    },
     workspace::{
         create_project, duplicate_project, open_project, save_project, ExplorerLayout,
         ProjectSession, RecentProject, WorkspaceRepository,
@@ -54,7 +60,7 @@ pub fn get_app_info() -> CommandResponse<AppInfo> {
     CommandResponse::from_result(Ok(AppInfo {
         name: "Emanduite",
         version: env!("CARGO_PKG_VERSION"),
-        phase: "Phase 3 - Desktop Configuration Tools",
+        phase: "Phase 4 - Desktop Stabilization",
         blueprint_schema_version: CURRENT_SCHEMA_VERSION,
         database_providers: ["sqlite"],
     }))
@@ -313,4 +319,66 @@ pub fn save_extension_file(
         content,
         format,
     ))
+}
+
+#[tauri::command]
+pub fn list_workflow_definitions() -> CommandResponse<Vec<WorkflowDefinition>> {
+    CommandResponse::from_result(Ok(workflow_definitions()))
+}
+
+#[tauri::command]
+pub fn list_workflow_tasks(state: State<'_, WorkflowState>) -> CommandResponse<Vec<WorkflowTask>> {
+    CommandResponse::from_result(state.tasks())
+}
+
+#[tauri::command]
+pub fn start_registered_workflow(
+    project_path: String,
+    workflow_id: String,
+    working_directory: Option<String>,
+    app: tauri::AppHandle,
+) -> CommandResponse<WorkflowTask> {
+    CommandResponse::from_result(start_workflow(
+        app,
+        project_path,
+        workflow_id,
+        working_directory,
+    ))
+}
+
+#[tauri::command]
+pub fn cancel_registered_workflow(
+    task_id: String,
+    state: State<'_, WorkflowState>,
+) -> CommandResponse<()> {
+    CommandResponse::from_result(cancel_workflow(&state, &task_id))
+}
+
+#[tauri::command]
+pub fn diagnose_project_command(project_path: String) -> CommandResponse<ProjectHealth> {
+    CommandResponse::from_result(diagnose_project(Path::new(&project_path)))
+}
+
+#[tauri::command]
+pub fn recover_project_command(
+    project_path: String,
+    state: State<'_, WorkspaceRepository>,
+) -> CommandResponse<ProjectSession> {
+    let path = Path::new(&project_path);
+    CommandResponse::from_result(recover_blueprint(path).and_then(|_| open_project(&state, path)))
+}
+
+#[tauri::command]
+pub fn export_support_bundle_command(
+    project_path: String,
+    destination_directory: String,
+    state: State<'_, WorkflowState>,
+) -> CommandResponse<String> {
+    CommandResponse::from_result(state.tasks().and_then(|tasks| {
+        export_support_bundle(
+            Path::new(&project_path),
+            Path::new(&destination_directory),
+            &tasks,
+        )
+    }))
 }

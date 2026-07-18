@@ -4,12 +4,15 @@ pub mod database;
 pub mod error;
 pub mod extension;
 pub mod logging;
+pub mod recovery;
 pub mod secret;
+pub mod workflow;
 pub mod workspace;
 
 use commands::{MigrationState, SecretState};
 use secret::KeyringSecretStore;
 use tauri::Manager;
+use workflow::WorkflowState;
 use workspace::WorkspaceRepository;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,6 +25,10 @@ pub fn run() {
             let repository = WorkspaceRepository::open(state_path)
                 .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
             app.manage(repository);
+            let workflow_state =
+                WorkflowState::open(app.path().app_data_dir()?.join("workflow-history.json"))
+                    .map_err(|error| -> Box<dyn std::error::Error> { Box::new(error) })?;
+            app.manage(workflow_state);
             Ok(())
         })
         .manage(SecretState(KeyringSecretStore))
@@ -52,6 +59,13 @@ pub fn run() {
             commands::load_extension_file,
             commands::validate_extension_file,
             commands::save_extension_file,
+            commands::list_workflow_definitions,
+            commands::list_workflow_tasks,
+            commands::start_registered_workflow,
+            commands::cancel_registered_workflow,
+            commands::diagnose_project_command,
+            commands::recover_project_command,
+            commands::export_support_bundle_command,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Emanduite desktop workspace");
