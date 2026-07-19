@@ -255,6 +255,14 @@ pub fn workflow_definitions() -> Vec<WorkflowDefinition> {
             600,
             Some("build"),
         ),
+        definition(
+            "npm-preview",
+            "Start generated preview",
+            "Run the registered Next.js development server; cancel stops its process tree",
+            &["run", "dev"],
+            3_600,
+            Some("dev"),
+        ),
     ]
 }
 

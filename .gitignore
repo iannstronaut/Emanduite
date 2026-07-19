@@ -5,6 +5,7 @@
 !/docs/dev/Phase-3.md
 !/docs/dev/Phase-4.md
 !/docs/dev/Phase-5.md
+!/docs/dev/Phase-6.md
 node_modules/
 /src-tauri/gen/
 target/

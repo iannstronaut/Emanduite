@@ -1,5 +1,7 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
+use std::collections::BTreeMap;
+
 use crate::{
     blueprint::{
         Blueprint, CanonicalType, Column, ConnectionConfig, EntityConfig, EntityFieldConfig, Table,
@@ -45,11 +47,13 @@ pub(super) fn render_project(
     if entities.is_empty() {
         return Err(AppError::Validation);
     }
+    let auth_enabled = blueprint.auth.is_some();
     let mut files = static_files(blueprint, &entities)?;
     files.push(generated("prisma/schema.prisma", prisma_schema(blueprint)?));
     for entity in &entities {
-        files.extend(render_entity(entity));
+        files.extend(render_entity(entity, auth_enabled));
     }
+    files.extend(security_files(blueprint, &entities)?);
     if let Some(entity) = entities.iter().find(|entity| {
         entity.fields.iter().any(|field| {
             field.show_form
@@ -127,9 +131,11 @@ fn static_files(
     "@prisma/adapter-better-sqlite3": "7.8.0",
     "@prisma/client": "7.8.0",
     "@tanstack/react-table": "8.21.3",
+    "bcryptjs": "3.0.3",
     "better-sqlite3": "12.4.1",
     "dotenv": "17.2.3",
     "next": "16.2.10",
+    "next-auth": "4.24.14",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-hook-form": "7.81.0",
@@ -174,6 +180,150 @@ fn static_files(
         generated("src/app/(dashboard)/layout.tsx", DASHBOARD_LAYOUT.replace("{{NAVIGATION}}", &navigation)),
         generated("src/app/(dashboard)/page.tsx", DASHBOARD_PAGE.replace("{{ENTITY_CARDS}}", &entity_cards)),
     ])
+}
+
+fn security_files(
+    blueprint: &Blueprint,
+    entities: &[EntitySpec],
+) -> Result<Vec<GeneratedFile>, AppError> {
+    let resources = blueprint
+        .resources
+        .values()
+        .map(|resource| (resource.id.as_str(), resource.key.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let roles = blueprint
+        .roles
+        .iter()
+        .map(|(key, role)| {
+            let permissions = role
+                .permissions
+                .iter()
+                .filter_map(|(resource_id, actions)| {
+                    resources.get(resource_id.as_str()).map(|resource| {
+                        format!(
+                            "{}: [{}]",
+                            js_string(resource),
+                            actions
+                                .iter()
+                                .map(|action| js_string(action))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}: {{ {} }}", js_string(key), permissions)
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut files = vec![
+        generated("src/lib/access-policy.ts", format!("export const rolePermissions = {{ {roles} }} as const;\nexport type PermissionAction = \"read\" | \"create\" | \"update\" | \"delete\";\nexport function hasPermission(roleKey: string | undefined, resource: string, action: PermissionAction) {{ return Boolean(roleKey && rolePermissions[roleKey as keyof typeof rolePermissions]?.[resource as never]?.includes(action as never)); }}\n")),
+        generated("src/lib/hooks.ts", HOOK_RUNTIME),
+    ];
+    if let Some(auth) = &blueprint.auth {
+        files.extend(auth_files(blueprint, entities, auth)?);
+    }
+    Ok(files)
+}
+
+fn auth_files(
+    blueprint: &Blueprint,
+    entities: &[EntitySpec],
+    auth: &crate::blueprint::AuthConfig,
+) -> Result<Vec<GeneratedFile>, AppError> {
+    let config = blueprint
+        .entities
+        .values()
+        .find(|entity| entity.id == auth.user_entity_id)
+        .ok_or(AppError::Validation)?;
+    let user_key = blueprint
+        .entities
+        .iter()
+        .find(|(_, entity)| entity.id == auth.user_entity_id)
+        .map(|(key, _)| key.clone())
+        .ok_or(AppError::Validation)?;
+    let user = entities
+        .iter()
+        .find(|entity| entity.key == user_key)
+        .ok_or(AppError::Validation)?;
+    let field = |id: &str| -> Result<String, AppError> {
+        let key = config
+            .fields
+            .iter()
+            .find(|(_, field)| field.id == id)
+            .map(|(key, _)| key)
+            .ok_or(AppError::Validation)?;
+        user.fields
+            .iter()
+            .find(|field| &field.key == key)
+            .map(|field| field.prisma.clone())
+            .ok_or(AppError::Validation)
+    };
+    let identifier = field(&auth.identifier_field_id)?;
+    let password = field(&auth.password_field_id)?;
+    let external = field(&auth.external_id_field_id)?;
+    let registration = matches!(
+        auth.registration_policy,
+        crate::blueprint::RegistrationPolicy::Open
+    );
+    let auth_source = format!(
+        r#"import NextAuth, {{ type NextAuthOptions }} from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import {{ compare }} from "bcryptjs";
+import {{ prisma }} from "@/lib/prisma";
+
+export const authOptions: NextAuthOptions = {{ session: {{ strategy: "jwt" }}, pages: {{ signIn: "/login" }}, providers: [CredentialsProvider({{ name: "Credentials", credentials: {{ identifier: {{ label: "Identifier", type: "text" }}, password: {{ label: "Password", type: "password" }} }}, async authorize(credentials) {{
+  const identifier = credentials?.identifier?.trim(); const password = credentials?.password;
+  if (!identifier || !password) return null;
+  const user = await prisma.{delegate}.findFirst({{ where: {{ {identifier}: identifier }} }});
+  const candidate = user as Record<string, unknown> | null;
+  if (!candidate || !(await compare(password, String(candidate.{password} ?? "")))) return null;
+  const subject = await prisma.sysAuthSubject.findUnique({{ where: {{ externalId: String(candidate.{external}) }} }});
+  return {{ id: String(candidate.{external}), name: String(candidate.{identifier}), roleKey: subject?.roleKey ?? "" }} as never;
+}}) ], callbacks: {{ async jwt({{ token, user }}) {{ if (user) token.roleKey = (user as {{ roleKey?: string }}).roleKey; return token; }}, async session({{ session, token }}) {{ (session.user as {{ roleKey?: string }} | undefined)!.roleKey = String(token.roleKey ?? ""); return session; }} }} }};
+export default NextAuth(authOptions);
+"#,
+        delegate = user.delegate,
+        identifier = identifier,
+        password = password,
+        external = external
+    );
+    let access = r#"import { getServerSession } from "next-auth";
+import { authOptions } from "@/auth";
+import { hasPermission, type PermissionAction } from "./access-policy";
+
+export async function requirePermission(resource: string, action: PermissionAction) {
+  const session = await getServerSession(authOptions); const roleKey = (session?.user as { roleKey?: string } | undefined)?.roleKey;
+  if (!hasPermission(roleKey, resource, action)) throw new Error("FORBIDDEN");
+  return session;
+}
+"#;
+    let proxy = r#"import { getToken } from "next-auth/jwt";
+import { NextResponse, type NextRequest } from "next/server";
+
+export async function proxy(request: NextRequest) { const token = await getToken({ req: request }); if (!token) return NextResponse.redirect(new URL("/login", request.url)); return NextResponse.next(); }
+export const config = { matcher: ["/((?!api/auth|login|register|_next|favicon.ico).*)"] };
+"#;
+    let login = r#""use client";
+import { signIn } from "next-auth/react";
+import { useState } from "react";
+export default function LoginPage() { const [error,setError] = useState(""); return <main className="auth-page"><form className="form" action={async (form) => { const result = await signIn("credentials", { identifier: String(form.get("identifier") ?? ""), password: String(form.get("password") ?? ""), redirect: true, callbackUrl: "/" }); if (result?.error) setError("Invalid credentials"); }}><h1>Sign in</h1><label>Identifier<input name="identifier" required /></label><label>Password<input name="password" type="password" required /></label>{error && <p className="error" role="alert">{error}</p>}<button type="submit">Sign in</button></form></main>; }
+"#;
+    let mut files = vec![
+        generated("src/auth.ts", auth_source),
+        generated("src/lib/access.ts", access),
+        generated(
+            "src/app/api/auth/[...nextauth]/route.ts",
+            "import auth from \"@/auth\";\nexport { auth as GET, auth as POST };\n",
+        ),
+        generated("proxy.ts", proxy),
+        generated("src/app/login/page.tsx", login),
+    ];
+    if registration {
+        files.push(generated("src/app/register/page.tsx", "export default function RegisterPage() { return <main className=\"auth-page\"><p>Registration is enabled; implement the approved provisioning flow before public use.</p></main>; }\n"));
+    }
+    Ok(files)
 }
 
 fn entity_specs(blueprint: &Blueprint) -> Result<Vec<EntitySpec>, AppError> {
@@ -384,6 +534,7 @@ fn prisma_schema(blueprint: &Blueprint) -> Result<String, AppError> {
         }
         output.push_str(&format!("  @@map({})\n}}\n", prisma_string(&table.name)));
     }
+    output.push_str(SYSTEM_MODELS);
     Ok(output)
 }
 
@@ -593,13 +744,19 @@ fn escape_tsx(value: &str) -> String {
         .replace('{', "&#123;")
 }
 
-fn render_entity(entity: &EntitySpec) -> Vec<GeneratedFile> {
+fn render_entity(entity: &EntitySpec, auth_enabled: bool) -> Vec<GeneratedFile> {
     let feature = format!("src/features/{}", entity.slug);
     let route = format!("src/app/(dashboard)/{}", entity.slug);
     vec![
         generated(&format!("{feature}/schema.ts"), entity_schema(entity)),
-        generated(&format!("{feature}/actions.ts"), entity_actions(entity)),
-        generated(&format!("{feature}/query.ts"), entity_query(entity)),
+        generated(
+            &format!("{feature}/actions.ts"),
+            entity_actions(entity, auth_enabled),
+        ),
+        generated(
+            &format!("{feature}/query.ts"),
+            entity_query(entity, auth_enabled),
+        ),
         generated(&format!("{feature}/form.tsx"), entity_form(entity)),
         generated(&format!("{feature}/table.tsx"), entity_table(entity)),
         generated(&format!("{route}/page.tsx"), entity_list_page(entity)),
@@ -698,13 +855,30 @@ fn json_number(value: Option<&str>) -> Option<String> {
         .map(|number| number.to_string())
 }
 
-fn entity_actions(entity: &EntitySpec) -> String {
+fn entity_actions(entity: &EntitySpec, auth_enabled: bool) -> String {
     let id_parser = id_parser(&entity.primary, "id");
+    let guard_import = if auth_enabled {
+        "import { requirePermission } from \"@/lib/access\";\n"
+    } else {
+        ""
+    };
+    let guard = |action: &str| {
+        if auth_enabled {
+            format!(
+                "  await requirePermission({}, {});\n",
+                js_string(&entity.key),
+                js_string(action)
+            )
+        } else {
+            String::new()
+        }
+    };
     format!(
         r#""use server";
 import {{ revalidatePath }} from "next/cache";
 import {{ prisma }} from "@/lib/prisma";
 import {{ {delegate}Schema }} from "./schema";
+{guard_import}
 
 export type ActionResult = {{ ok: true }} | {{ ok: false; errors: Record<string,string[]> }};
 const invalid = (error: {{ flatten: () => {{ fieldErrors: Record<string,string[] | undefined> }} }}): ActionResult => {{
@@ -713,25 +887,32 @@ const invalid = (error: {{ flatten: () => {{ fieldErrors: Record<string,string[]
 }};
 
 export async function create{model}(input: unknown): Promise<ActionResult> {{
+{create_guard}
   const parsed = {delegate}Schema.safeParse(input); if (!parsed.success) return invalid(parsed.error);
   await prisma.{delegate}.create({{ data: parsed.data as never }}); revalidatePath("/{slug}"); return {{ ok: true }};
 }}
 export async function update{model}(id: string, input: unknown): Promise<ActionResult> {{
+{update_guard}
   const parsed = {delegate}Schema.safeParse(input); if (!parsed.success) return invalid(parsed.error);
   await prisma.{delegate}.update({{ where: {{ {pk}: {id_parser} }}, data: parsed.data as never }}); revalidatePath("/{slug}"); return {{ ok: true }};
 }}
 export async function delete{model}(id: string): Promise<void> {{
+{delete_guard}
   await prisma.{delegate}.delete({{ where: {{ {pk}: {id_parser} }} }}); revalidatePath("/{slug}");
 }}
 "#,
         delegate = entity.delegate,
         model = entity.model,
         slug = entity.slug,
-        pk = entity.primary.prisma
+        pk = entity.primary.prisma,
+        guard_import = guard_import,
+        create_guard = guard("create"),
+        update_guard = guard("update"),
+        delete_guard = guard("delete")
     )
 }
 
-fn entity_query(entity: &EntitySpec) -> String {
+fn entity_query(entity: &EntitySpec, auth_enabled: bool) -> String {
     let policy_fields = entity
         .fields
         .iter()
@@ -758,9 +939,23 @@ fn entity_query(entity: &EntitySpec) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let id_parser = id_parser(&entity.primary, "id");
+    let guard_import = if auth_enabled {
+        "import { requirePermission } from \"@/lib/access\";\n"
+    } else {
+        ""
+    };
+    let read_guard = if auth_enabled {
+        format!(
+            "  await requirePermission({}, \"read\");\n",
+            js_string(&entity.key)
+        )
+    } else {
+        String::new()
+    };
     format!(
         r#"import {{ prisma }} from "@/lib/prisma";
 import {{ parseListQuery }} from "@/lib/query-contract";
+{guard_import}
 
 export const {delegate}QueryPolicy = {{
   fields: {{
@@ -772,6 +967,7 @@ const scalar = (kind: string, value: string): unknown => {{ if (kind === "number
 const serialise = (row: object): Record<string,string | number | boolean | null> => Object.fromEntries(Object.entries(row).map(([key,value]) => [key, value instanceof Date ? value.toISOString() : typeof value === "bigint" ? value.toString() : value])) as Record<string,string | number | boolean | null>;
 
 export async function list{model}(params: URLSearchParams) {{
+{read_guard}
   const query = parseListQuery(params, {delegate}QueryPolicy); const and: Record<string,unknown>[] = [];
   if (query.search && {delegate}QueryPolicy.searchable.length) and.push({{ OR: {delegate}QueryPolicy.searchable.map((field) => ({{ [field]: {{ contains: query.search }} }})) }});
   for (const filter of query.filters) {{ const kind = {delegate}QueryPolicy.fields[filter.field as keyof typeof {delegate}QueryPolicy.fields]; and.push({{ [filter.field]: {{ [filter.operator]: scalar(kind, filter.value) }} }}); }}
@@ -779,14 +975,17 @@ export async function list{model}(params: URLSearchParams) {{
   const [rows,total] = await Promise.all([prisma.{delegate}.findMany({{ where: where as never, orderBy: orderBy as never, skip: (query.page - 1) * query.pageSize, take: query.pageSize }}), prisma.{delegate}.count({{ where: where as never }})]);
   return {{ rows: rows.map(serialise), total, query }};
 }}
-export async function get{model}(id: string) {{ const row = await prisma.{delegate}.findUnique({{ where: {{ {pk}: {id_parser} }} }}); return row ? serialise(row) : null; }}
+export async function get{model}(id: string) {{
+{read_guard}  const row = await prisma.{delegate}.findUnique({{ where: {{ {pk}: {id_parser} }} }}); return row ? serialise(row) : null; }}
 "#,
         delegate = entity.delegate,
         model = entity.model,
         policy_fields = policy_fields,
         searchable = searchable,
         sortable = sortable,
-        pk = entity.primary.prisma
+        pk = entity.primary.prisma,
+        guard_import = guard_import,
+        read_guard = read_guard
     )
 }
 
@@ -1155,6 +1354,59 @@ const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL ?? "file:./prisma/dev.sqlite" });
 export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
 if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;"#;
+
+const SYSTEM_MODELS: &str = r#"
+model SysRole {
+  id String @id @default(cuid())
+  key String @unique
+  label String
+  @@map("sys_roles")
+}
+
+model SysAuthSubject {
+  id String @id @default(cuid())
+  externalId String @unique @map("external_id")
+  roleKey String @map("role_key")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("sys_auth_subjects")
+}
+
+model SysResource {
+  id String @id @default(cuid())
+  key String @unique
+  @@map("sys_resources")
+}
+
+model SysPermission {
+  id String @id @default(cuid())
+  roleKey String @map("role_key")
+  resourceKey String @map("resource_key")
+  action String
+  @@unique([roleKey, resourceKey, action])
+  @@map("sys_permissions")
+}
+
+model SysAuditLog {
+  id String @id @default(cuid())
+  subjectId String? @map("subject_id")
+  resourceKey String @map("resource_key")
+  action String
+  outcome String
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([resourceKey, createdAt])
+  @@map("sys_audit_logs")
+}
+"#;
+
+const HOOK_RUNTIME: &str = r#"export interface HookContextV1<TInput = unknown> { version: 1; entity: string; action: "create" | "update" | "delete" | "list" | "view"; input: TInput; }
+export interface HookOutcome { name: string; ok: boolean; timedOut: boolean; }
+export async function runHook<T>(name: string, hook: ((context: HookContextV1<T>) => Promise<T>) | undefined, context: HookContextV1<T>, timeoutMs = 2_000): Promise<{ value: T; outcome: HookOutcome }> {
+  if (!hook) return { value: context.input, outcome: { name, ok: true, timedOut: false } };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { const value = await Promise.race([hook(context), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("hook timeout")), timeoutMs); })]); return { value, outcome: { name, ok: true, timedOut: false } }; }
+  catch { return { value: context.input, outcome: { name, ok: false, timedOut: true } }; }
+  finally { if (timer) clearTimeout(timer); }
+}"#;
 
 const EXTENSION_TYPES: &str = r#"export interface HookContextV1<TInput = unknown> {
   version: 1;

@@ -14,7 +14,7 @@ use crate::{
 };
 
 pub const TEMPLATE_ID: &str = "next-admin-v1";
-pub const TEMPLATE_VERSION: &str = "1.0.0";
+pub const TEMPLATE_VERSION: &str = "1.1.0";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -183,8 +183,8 @@ mod tests {
 
     use super::*;
     use crate::blueprint::{
-        CanonicalType, Column, EntityConfig, EntityFieldConfig, ExtensionConfig,
-        ExtensionOwnership, Table,
+        AuthConfig, CanonicalType, Column, EntityConfig, EntityFieldConfig, ExtensionConfig,
+        ExtensionOwnership, RegistrationPolicy, ResourceConfig, RoleConfig, Table,
     };
 
     fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -332,5 +332,65 @@ mod tests {
             "// manual generated change\n"
         );
         assert!(target.join(&result.conflicts[0].artifact_path).is_file());
+    }
+
+    #[test]
+    fn auth_configuration_generates_server_guards_and_system_schema() {
+        let directory = tempfile::tempdir().unwrap();
+        let (project, target) = fixture(directory.path());
+        let mut blueprint = load_blueprint(&project).unwrap();
+        let users = blueprint.entities.get("users").unwrap().clone();
+        let identifier = users.fields.get("name").unwrap().id.clone();
+        let external = users.fields.get("id").unwrap().id.clone();
+        let password = identifier.clone();
+        let resource_id = uuid::Uuid::new_v4().to_string();
+        blueprint.resources.insert(
+            "users".into(),
+            ResourceConfig {
+                id: resource_id.clone(),
+                key: "users".into(),
+                resource_type: "entity".into(),
+                actions: ["read", "create", "update", "delete"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            },
+        );
+        blueprint.roles.insert(
+            "admin".into(),
+            RoleConfig {
+                id: uuid::Uuid::new_v4().to_string(),
+                key: "admin".into(),
+                label: "Admin".into(),
+                permissions: BTreeMap::from([(
+                    resource_id,
+                    ["read", "create", "update", "delete"]
+                        .into_iter()
+                        .map(String::from)
+                        .collect(),
+                )]),
+            },
+        );
+        blueprint.auth = Some(AuthConfig {
+            database_id: users.database_id,
+            user_entity_id: users.id,
+            external_id_field_id: external,
+            identifier_field_id: identifier,
+            password_field_id: password,
+            registration_policy: RegistrationPolicy::Disabled,
+            password_login: true,
+        });
+        save_blueprint(&project, &blueprint).unwrap();
+        generate_project(&project, &target).unwrap();
+        assert!(target.join("src/auth.ts").is_file());
+        assert!(target.join("proxy.ts").is_file());
+        assert!(
+            fs::read_to_string(target.join("src/features/users/actions.ts"))
+                .unwrap()
+                .contains("requirePermission")
+        );
+        assert!(fs::read_to_string(target.join("prisma/schema.prisma"))
+            .unwrap()
+            .contains("model SysAuditLog"));
     }
 }
