@@ -4,10 +4,14 @@
 !/docs/dev/Phase-2.md
 !/docs/dev/Phase-3.md
 !/docs/dev/Phase-4.md
+!/docs/dev/Phase-5.md
 node_modules/
 /src-tauri/gen/
 target/
 dist/
+.phase5-generated/
+.phase5-gate/
+phase5-gate/
 .env
 .env.*
 *.log

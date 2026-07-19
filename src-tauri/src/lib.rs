@@ -3,6 +3,7 @@ pub mod commands;
 pub mod database;
 pub mod error;
 pub mod extension;
+pub mod generator;
 pub mod logging;
 pub mod recovery;
 pub mod secret;
@@ -66,6 +67,8 @@ pub fn run() {
             commands::diagnose_project_command,
             commands::recover_project_command,
             commands::export_support_bundle_command,
+            commands::preview_generation_command,
+            commands::generate_project_command,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Emanduite desktop workspace");

@@ -16,7 +16,10 @@
     "phase1:check": "npm run check && npm run test:rust",
     "phase2:check": "npm run check && npm run test:rust",
     "phase3:check": "npm run check && npm run test:rust",
-    "phase4:check": "npm run check && npm run test:rust"
+    "phase4:check": "npm run check && npm run test:rust",
+    "phase5:fixture": "cargo run --manifest-path src-tauri/Cargo.toml --bin generate-phase5-fixture -- .phase5-generated",
+    "phase5:generated:check": "npm run typecheck --prefix .phase5-generated/app && npm run lint --prefix .phase5-generated/app && npm run test --prefix .phase5-generated/app && npm run build --prefix .phase5-generated/app",
+    "phase5:check": "npm run check && npm run test:rust"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

@@ -13,6 +13,7 @@ import type {
 } from "../contracts/workspace";
 import type { ApplyResult, ExtensionDocument, MigrationPlan, SchemaOperation } from "../contracts/schema-editor";
 import type { ProjectHealth, WorkflowDefinition, WorkflowTask } from "../contracts/workflow";
+import type { GenerationPreview, GenerationResult } from "../contracts/generator";
 
 const command = <T>(name: string, args?: Record<string, unknown>) =>
   invoke<CommandResponse<T>>(name, args);
@@ -62,6 +63,10 @@ export const recoverProject = (projectPath: string) =>
   command<ProjectSession>("recover_project_command", { projectPath });
 export const exportSupportBundle = (projectPath: string, destinationDirectory: string) =>
   command<string>("export_support_bundle_command", { projectPath, destinationDirectory });
+export const previewGeneration = (projectPath: string, targetDirectory: string) =>
+  command<GenerationPreview>("preview_generation_command", { projectPath, targetDirectory });
+export const generateProject = (projectPath: string, targetDirectory: string) =>
+  command<GenerationResult>("generate_project_command", { projectPath, targetDirectory });
 
 export async function selectProjectDirectory(): Promise<string | null> {
   const result = await open({ directory: true, multiple: false, title: "Select project directory" });

@@ -1,4 +1,4 @@
-export type ErrorCode = "VALIDATION_ERROR" | "NOT_FOUND" | "IO_ERROR" | "DATABASE_ERROR" | "SECRET_STORE_ERROR" | "UNSUPPORTED_VERSION" | "CAPABILITY_DENIED" | "INVALID_PATH" | "INTERNAL_ERROR";
+export type ErrorCode = "VALIDATION_ERROR" | "NOT_FOUND" | "CONFLICT" | "IO_ERROR" | "DATABASE_ERROR" | "SECRET_STORE_ERROR" | "UNSUPPORTED_VERSION" | "CAPABILITY_DENIED" | "INVALID_PATH" | "INTERNAL_ERROR";
 
 export interface CommandError { code: ErrorCode; message: string; correlationId: string; details?: Record<string, unknown>; }
 export type CommandResponse<T> = { ok: true; data: T } | { ok: false; error: CommandError };

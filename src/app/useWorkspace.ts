@@ -18,7 +18,7 @@ import type { MigrationPlan, SchemaOperation } from "../contracts/schema-editor"
 const fallbackInfo: AppInfo = {
   name: "Emanduite",
   version: "web-preview",
-  phase: "Phase 4 - Desktop Stabilization",
+  phase: "Phase 5 - Next.js Generator",
   blueprintSchemaVersion: 1,
   databaseProviders: ["sqlite"]
 };
@@ -111,6 +111,13 @@ export function useWorkspace() {
   const recover = () => run(async () => {
     if (!session) return;
     const next = unwrap(await api.recoverProject(session.path));
+    await activate(next);
+    return next;
+  });
+
+  const refreshProject = () => run(async () => {
+    if (!session) return;
+    const next = unwrap(await api.openProject(session.path));
     await activate(next);
     return next;
   });
@@ -217,7 +224,7 @@ export function useWorkspace() {
   return {
     info, runtime, view, setView, session, recent, saveState, error, setError,
     connection, diagnostics, layout, setLayout, create, openProject, duplicate,
-    removeRecent, recover, setSqlitePath, testConnection, introspect, updateBlueprint, commitBlueprint,
+    removeRecent, recover, refreshProject, setSqlitePath, testConnection, introspect, updateBlueprint, commitBlueprint,
     planSchema, applySchema
   };
 }

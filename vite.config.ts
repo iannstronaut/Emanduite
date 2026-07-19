@@ -17,6 +17,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
-    css: true
+    css: true,
+    exclude: ["**/node_modules/**", "**/.phase5-*/**", "**/phase5-gate/**"]
   }
 });

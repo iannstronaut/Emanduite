@@ -16,6 +16,7 @@ use crate::{
     },
     error::{AppError, CommandResponse},
     extension::{load_extension, save_extension, validate_extension, ExtensionDocument},
+    generator::{generate_project, preview_project, GenerationPreview, GenerationResult},
     recovery::{diagnose_project, export_support_bundle, ProjectHealth},
     secret::{KeyringSecretStore, SecretStore},
     workflow::{
@@ -60,7 +61,7 @@ pub fn get_app_info() -> CommandResponse<AppInfo> {
     CommandResponse::from_result(Ok(AppInfo {
         name: "Emanduite",
         version: env!("CARGO_PKG_VERSION"),
-        phase: "Phase 4 - Desktop Stabilization",
+        phase: "Phase 5 - Next.js Generator",
         blueprint_schema_version: CURRENT_SCHEMA_VERSION,
         database_providers: ["sqlite"],
     }))
@@ -381,4 +382,26 @@ pub fn export_support_bundle_command(
             &tasks,
         )
     }))
+}
+
+#[tauri::command]
+pub fn preview_generation_command(
+    project_path: String,
+    target_directory: String,
+) -> CommandResponse<GenerationPreview> {
+    CommandResponse::from_result(preview_project(
+        Path::new(&project_path),
+        Path::new(&target_directory),
+    ))
+}
+
+#[tauri::command]
+pub fn generate_project_command(
+    project_path: String,
+    target_directory: String,
+) -> CommandResponse<GenerationResult> {
+    CommandResponse::from_result(generate_project(
+        Path::new(&project_path),
+        Path::new(&target_directory),
+    ))
 }
