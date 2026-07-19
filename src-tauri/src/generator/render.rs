@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use crate::{
     blueprint::{
-        Blueprint, CanonicalType, Column, ConnectionConfig, EntityConfig, EntityFieldConfig, Table,
+        Blueprint, CanonicalType, Column, ConnectionConfig, DatabaseProvider, EntityConfig,
+        EntityFieldConfig, Table,
     },
     error::AppError,
 };
@@ -90,9 +91,23 @@ fn static_files(
     entities: &[EntitySpec],
 ) -> Result<Vec<GeneratedFile>, AppError> {
     let project_name = package_name(&blueprint.project_name);
-    let database_url = match &blueprint.databases.main.connection {
-        ConnectionConfig::Sqlite { path } => format!("file:{}", path.replace('\\', "/")),
+    let database_url = match (
+        &blueprint.databases.main.provider,
+        &blueprint.databases.main.connection,
+    ) {
+        (DatabaseProvider::Sqlite, ConnectionConfig::Sqlite { path }) => {
+            format!("file:{}", path.replace('\\', "/"))
+        }
+        (DatabaseProvider::Postgresql, ConnectionConfig::Server { .. })
+        | (DatabaseProvider::Mysql, ConnectionConfig::Server { .. }) => String::new(),
         _ => return Err(AppError::Validation),
+    };
+    let env_example = match blueprint.databases.main.provider {
+        DatabaseProvider::Sqlite => "DATABASE_URL=\"file:./prisma/dev.sqlite\"\n",
+        DatabaseProvider::Postgresql => {
+            "DATABASE_URL=\"postgresql://USER:PASSWORD@HOST:5432/DATABASE?schema=public\"\n"
+        }
+        DatabaseProvider::Mysql => "DATABASE_URL=\"mysql://USER:PASSWORD@HOST:3306/DATABASE\"\n",
     };
     let navigation = entities
         .iter()
@@ -168,9 +183,9 @@ fn static_files(
         generated("vitest.config.ts", "import { resolve } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nimport { defineConfig } from \"vitest/config\";\n\nconst root = fileURLToPath(new URL(\".\", import.meta.url));\nexport default defineConfig({ resolve: { alias: { \"@\": resolve(root, \"src\") } }, test: { environment: \"node\", include: [\"src/**/*.test.ts\"] } });\n"),
         generated("prisma.config.ts", PRISMA_CONFIG),
         user(".env", format!("DATABASE_URL={}\n", dotenv_quote(&database_url))),
-        generated(".env.example", "DATABASE_URL=\"file:./prisma/dev.sqlite\"\n"),
+        generated(".env.example", env_example),
         generated(".gitignore", "node_modules/\n.next/\n.env\nsrc/generated/prisma/\n*.log\n"),
-        generated("src/lib/prisma.ts", PRISMA_CLIENT),
+        generated("src/lib/prisma.ts", prisma_client(blueprint.databases.main.provider)),
         generated("src/lib/query-contract.ts", QUERY_CONTRACT),
         generated("src/lib/query-contract.test.ts", QUERY_CONTRACT_TEST),
         generated("src/extensions/types.ts", EXTENSION_TYPES),
@@ -476,7 +491,12 @@ fn field_spec(
 }
 
 fn prisma_schema(blueprint: &Blueprint) -> Result<String, AppError> {
-    let mut output = String::from("generator client {\n  provider = \"prisma-client\"\n  output = \"../src/generated/prisma\"\n  moduleFormat = \"esm\"\n}\n\ndatasource db {\n  provider = \"sqlite\"\n}\n");
+    let provider = match blueprint.databases.main.provider {
+        DatabaseProvider::Sqlite => "sqlite",
+        DatabaseProvider::Postgresql => "postgresql",
+        DatabaseProvider::Mysql => "mysql",
+    };
+    let mut output = format!("generator client {{\n  provider = \"prisma-client\"\n  output = \"../src/generated/prisma\"\n  moduleFormat = \"esm\"\n}}\n\ndatasource db {{\n  provider = \"{provider}\"\n}}\n");
     let mut models = BTreeSet::new();
     for table in &blueprint.databases.main.tables {
         let model = pascal_identifier(&table.name);
@@ -1347,13 +1367,22 @@ export default defineConfig({
   datasource: { url: env("DATABASE_URL") }
 });"#;
 
-const PRISMA_CLIENT: &str = r#"import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+fn prisma_client(provider: DatabaseProvider) -> String {
+    match provider {
+        DatabaseProvider::Sqlite => r#"import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "@/generated/prisma/client";
 
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 const adapter = new PrismaBetterSqlite3({ url: process.env.DATABASE_URL ?? "file:./prisma/dev.sqlite" });
 export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;"#;
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;"#.into(),
+        DatabaseProvider::Postgresql | DatabaseProvider::Mysql => r#"import { PrismaClient } from "@/generated/prisma/client";
+
+const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
+export const prisma = globalForPrisma.prisma ?? new PrismaClient();
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;"#.into(),
+    }
+}
 
 const SYSTEM_MODELS: &str = r#"
 model SysRole {

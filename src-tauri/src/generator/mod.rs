@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     blueprint::{
         load_blueprint, save_blueprint, validate_blueprint, validate_blueprint_path, Blueprint,
-        DatabaseProvider,
     },
     error::AppError,
 };
@@ -168,9 +167,7 @@ fn generation_input(
         return Err(AppError::InvalidPath);
     }
     let blueprint = load_blueprint(&project_file)?;
-    if !validate_blueprint(&blueprint).is_empty()
-        || blueprint.databases.main.provider != DatabaseProvider::Sqlite
-    {
+    if !validate_blueprint(&blueprint).is_empty() {
         return Err(AppError::Validation);
     }
     fs::create_dir_all(target.join(".emanduite"))?;
@@ -183,8 +180,9 @@ mod tests {
 
     use super::*;
     use crate::blueprint::{
-        AuthConfig, CanonicalType, Column, EntityConfig, EntityFieldConfig, ExtensionConfig,
-        ExtensionOwnership, RegistrationPolicy, ResourceConfig, RoleConfig, Table,
+        AuthConfig, CanonicalType, Column, ConnectionConfig, DatabaseProvider, EntityConfig,
+        EntityFieldConfig, ExtensionConfig, ExtensionOwnership, RegistrationPolicy, ResourceConfig,
+        RoleConfig, Table,
     };
 
     fn fixture(root: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
@@ -392,5 +390,32 @@ mod tests {
         assert!(fs::read_to_string(target.join("prisma/schema.prisma"))
             .unwrap()
             .contains("model SysAuditLog"));
+    }
+
+    #[test]
+    fn server_provider_matrix_renders_prisma_without_credentials() {
+        for (provider, expected) in [
+            (DatabaseProvider::Postgresql, "postgresql"),
+            (DatabaseProvider::Mysql, "mysql"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let (project, target) = fixture(directory.path());
+            let mut blueprint = load_blueprint(&project).unwrap();
+            blueprint.databases.main.provider = provider;
+            blueprint.databases.main.connection = ConnectionConfig::Server {
+                host: "db.example.test".into(),
+                port: 5432,
+                database: "app".into(),
+                username: "app".into(),
+            };
+            save_blueprint(&project, &blueprint).unwrap();
+            generate_project(&project, &target).unwrap();
+            assert!(fs::read_to_string(target.join("prisma/schema.prisma"))
+                .unwrap()
+                .contains(&format!("provider = \"{expected}\"")));
+            assert!(fs::read_to_string(target.join(".env.example"))
+                .unwrap()
+                .contains("DATABASE_URL"));
+        }
     }
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Code, Data, Diagram, Edit, Folder, Global, LoginCurve, Magicpen, Monitor, Profile2User, SecuritySafe } from "iconsax-reactjs";
 import { ConnectionManager } from "./ConnectionManager";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { ProjectManager } from "./ProjectManager";
@@ -10,6 +11,8 @@ import { AuthEditor, EntityEditor, GlobalEditor, PermissionEditor } from "./Conf
 import { ExtensionEditor } from "./ExtensionEditor";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { GeneratorPanel } from "./GeneratorPanel";
+import activeLogo from "../../assets/emanduite.svg";
+import inactiveLogo from "../../assets/emanduite_inactive.svg";
 
 export function App() {
   return <ErrorBoundary><Workspace /></ErrorBoundary>;
@@ -37,19 +40,20 @@ function Workspace() {
   };
 
   return <main className="workspace-shell">
+    <img className="app-logo" src={workspace.session ? activeLogo : inactiveLogo} alt="Emanduite" />
     <header className="titlebar"><span className="brand">Emanduite</span><span className="phase-badge">{workspace.info.phase}</span><span className="project-context">{workspace.session?.blueprint.projectName ?? "No active project"}</span><button className="command-trigger" onClick={() => setPalette(true)}>⌘ Commands <kbd>Ctrl K</kbd></button></header>
     <aside className="navigation" aria-label="Workspace navigation">
-      <button className={workspace.view === "projects" ? "nav-item active" : "nav-item"} aria-label="Projects" onClick={() => workspace.setView("projects")}><b>PR</b><span>Projects</span></button>
-      <button className={workspace.view === "database" ? "nav-item active" : "nav-item"} aria-label="Database" disabled={!workspace.session} onClick={() => workspace.setView("database")}><b>DB</b><span>Database</span></button>
-      <button className={workspace.view === "schema" ? "nav-item active" : "nav-item"} aria-label="Schema" disabled={!workspace.session} onClick={() => workspace.setView("schema")}><b>ER</b><span>Schema</span></button>
-      <button className={workspace.view === "editor" ? "nav-item active" : "nav-item"} aria-label="Schema editor" disabled={!workspace.session} onClick={() => workspace.setView("editor")}><b>ED</b><span>Editor</span></button>
-      <button className={workspace.view === "entities" ? "nav-item active" : "nav-item"} aria-label="Entities" disabled={!workspace.session} onClick={() => workspace.setView("entities")}><b>EN</b><span>Entities</span></button>
-      <button className={workspace.view === "permissions" ? "nav-item active" : "nav-item"} aria-label="Permissions" disabled={!workspace.session} onClick={() => workspace.setView("permissions")}><b>RB</b><span>Access</span></button>
-      <button className={workspace.view === "auth" ? "nav-item active" : "nav-item"} aria-label="Authentication" disabled={!workspace.session} onClick={() => workspace.setView("auth")}><b>AU</b><span>Auth</span></button>
-      <button className={workspace.view === "extensions" ? "nav-item active" : "nav-item"} aria-label="Extensions" disabled={!workspace.session} onClick={() => workspace.setView("extensions")}><b>EX</b><span>Extend</span></button>
-      <button className={workspace.view === "global" ? "nav-item active" : "nav-item"} aria-label="Global config" disabled={!workspace.session} onClick={() => workspace.setView("global")}><b>GL</b><span>Global</span></button>
-      <button className={workspace.view === "workflow" ? "nav-item active" : "nav-item"} aria-label="Workflows and diagnostics" disabled={!workspace.session} onClick={() => workspace.setView("workflow")}><b>WF</b><span>Operate</span></button>
-      <button className={workspace.view === "generator" ? "nav-item active" : "nav-item"} aria-label="Next.js generator" disabled={!workspace.session} onClick={() => workspace.setView("generator")}><b>GN</b><span>Generate</span></button>
+      <button className={workspace.view === "projects" ? "nav-item active" : "nav-item"} aria-label="Projects" onClick={() => workspace.setView("projects")}><Folder size={18} variant={workspace.view === "projects" ? "Bold" : "Linear"} /><span>Projects</span></button>
+      <button className={workspace.view === "database" ? "nav-item active" : "nav-item"} aria-label="Database" disabled={!workspace.session} onClick={() => workspace.setView("database")}><Data size={18} variant={workspace.view === "database" ? "Bold" : "Linear"} /><span>Database</span></button>
+      <button className={workspace.view === "schema" ? "nav-item active" : "nav-item"} aria-label="Schema" disabled={!workspace.session} onClick={() => workspace.setView("schema")}><Diagram size={18} variant={workspace.view === "schema" ? "Bold" : "Linear"} /><span>Schema</span></button>
+      <button className={workspace.view === "editor" ? "nav-item active" : "nav-item"} aria-label="Schema editor" disabled={!workspace.session} onClick={() => workspace.setView("editor")}><Edit size={18} variant={workspace.view === "editor" ? "Bold" : "Linear"} /><span>Editor</span></button>
+      <button className={workspace.view === "entities" ? "nav-item active" : "nav-item"} aria-label="Entities" disabled={!workspace.session} onClick={() => workspace.setView("entities")}><Profile2User size={18} variant={workspace.view === "entities" ? "Bold" : "Linear"} /><span>Entities</span></button>
+      <button className={workspace.view === "permissions" ? "nav-item active" : "nav-item"} aria-label="Permissions" disabled={!workspace.session} onClick={() => workspace.setView("permissions")}><SecuritySafe size={18} variant={workspace.view === "permissions" ? "Bold" : "Linear"} /><span>Access</span></button>
+      <button className={workspace.view === "auth" ? "nav-item active" : "nav-item"} aria-label="Authentication" disabled={!workspace.session} onClick={() => workspace.setView("auth")}><LoginCurve size={18} variant={workspace.view === "auth" ? "Bold" : "Linear"} /><span>Auth</span></button>
+      <button className={workspace.view === "extensions" ? "nav-item active" : "nav-item"} aria-label="Extensions" disabled={!workspace.session} onClick={() => workspace.setView("extensions")}><Code size={18} variant={workspace.view === "extensions" ? "Bold" : "Linear"} /><span>Extend</span></button>
+      <button className={workspace.view === "global" ? "nav-item active" : "nav-item"} aria-label="Global config" disabled={!workspace.session} onClick={() => workspace.setView("global")}><Global size={18} variant={workspace.view === "global" ? "Bold" : "Linear"} /><span>Global</span></button>
+      <button className={workspace.view === "workflow" ? "nav-item active" : "nav-item"} aria-label="Workflows and diagnostics" disabled={!workspace.session} onClick={() => workspace.setView("workflow")}><Monitor size={18} variant={workspace.view === "workflow" ? "Bold" : "Linear"} /><span>Operate</span></button>
+      <button className={workspace.view === "generator" ? "nav-item active" : "nav-item"} aria-label="Next.js generator" disabled={!workspace.session} onClick={() => workspace.setView("generator")}><Magicpen size={18} variant={workspace.view === "generator" ? "Bold" : "Linear"} /><span>Generate</span></button>
     </aside>
     <section className="content">
       {workspace.error && <div className="error-banner" role="alert"><span>{workspace.error}</span><button onClick={() => workspace.setError(null)}>Dismiss</button></div>}

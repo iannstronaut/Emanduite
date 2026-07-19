@@ -61,7 +61,7 @@ pub fn get_app_info() -> CommandResponse<AppInfo> {
     CommandResponse::from_result(Ok(AppInfo {
         name: "Emanduite",
         version: env!("CARGO_PKG_VERSION"),
-        phase: "Phase 6 - Auth, Permissions & Preview",
+        phase: "Phase 7 - Provider Matrix & Release",
         blueprint_schema_version: CURRENT_SCHEMA_VERSION,
         database_providers: ["sqlite"],
     }))
