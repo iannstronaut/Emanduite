@@ -39,6 +39,8 @@ export interface CreateProjectInput {
   directory: string;
   name: string;
   sqlitePath: string;
+  superadminEmail: string;
+  superadminPassword: string;
 }
 
 export interface DuplicateProjectInput {
@@ -48,6 +50,6 @@ export interface DuplicateProjectInput {
 }
 
 export type SaveState = "saved" | "dirty" | "saving" | "error";
-export type WorkspaceView = "projects" | "database" | "schema" | "editor" | "entities" | "permissions" | "auth" | "extensions" | "global" | "workflow" | "generator";
+export type WorkspaceView = "projects" | "database" | "schema" | "editor" | "ai" | "entities" | "permissions" | "auth" | "extensions" | "global" | "settings" | "workflow" | "generator";
 
 export type DatabaseConnection = DatabaseConfig;

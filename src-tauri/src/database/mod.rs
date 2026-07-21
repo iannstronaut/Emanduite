@@ -32,7 +32,11 @@ pub struct DatabaseDiagnostic {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum SchemaOperation {
     AddTable {
         operation_id: String,

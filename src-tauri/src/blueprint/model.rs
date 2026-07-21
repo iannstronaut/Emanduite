@@ -75,6 +75,117 @@ impl Blueprint {
             global: GlobalConfig::default(),
         }
     }
+
+    /// Adds the first usable CRUD/auth configuration for the SQLite system schema.
+    /// This is a no-op when the project already has custom entities or auth.
+    pub fn bootstrap_default_admin_configuration(&mut self) -> bool {
+        if !self.entities.is_empty() || self.auth.is_some() {
+            return false;
+        }
+        let Some(table) = self
+            .databases
+            .main
+            .tables
+            .iter()
+            .find(|table| table.name == "mst_users")
+        else {
+            return false;
+        };
+        let columns = table
+            .columns
+            .iter()
+            .map(|column| (column.name.as_str(), column.id.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let (Some(id), Some(email), Some(password)) = (
+            columns.get("id"),
+            columns.get("email"),
+            columns.get("password"),
+        ) else {
+            return false;
+        };
+        let database_id = self.databases.main.id.clone();
+        let entity_id = Uuid::new_v4().to_string();
+        let field =
+            |column_id: &str, control: &str, show_in_list, show_in_view, show_in_form, required| {
+                EntityFieldConfig {
+                    id: Uuid::new_v4().to_string(),
+                    column_id: column_id.into(),
+                    control: control.into(),
+                    show_in_list,
+                    show_in_view,
+                    show_in_form,
+                    required,
+                    validation: Vec::new(),
+                    options: Vec::new(),
+                    relation_display: None,
+                }
+            };
+        let id_field = field(id, "hidden", false, true, false, false);
+        let email_field = field(email, "text", true, true, true, true);
+        let password_field = field(password, "hidden", false, false, false, true);
+        let mut fields = BTreeMap::from([
+            ("id".into(), id_field.clone()),
+            ("email".into(), email_field.clone()),
+            ("password".into(), password_field.clone()),
+        ]);
+        if let Some(name) = columns.get("name") {
+            fields.insert("name".into(), field(name, "text", true, true, true, true));
+        }
+        if let Some(created_at) = columns.get("created_at") {
+            fields.insert(
+                "created_at".into(),
+                field(created_at, "date", false, true, false, false),
+            );
+        }
+        self.entities.insert(
+            "users".into(),
+            EntityConfig {
+                id: entity_id.clone(),
+                label: Some("Users".into()),
+                database_id: database_id.clone(),
+                table_id: table.id.clone(),
+                fields,
+            },
+        );
+        let resource_id = Uuid::new_v4().to_string();
+        self.resources.insert(
+            "users".into(),
+            ResourceConfig {
+                id: resource_id.clone(),
+                key: "users".into(),
+                resource_type: "entity".into(),
+                actions: ["read", "create", "update", "delete"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+            },
+        );
+        self.roles.insert(
+            "superadmin".into(),
+            RoleConfig {
+                id: Uuid::new_v4().to_string(),
+                key: "superadmin".into(),
+                label: "Superadmin".into(),
+                permissions: BTreeMap::from([(
+                    resource_id,
+                    ["read", "create", "update", "delete"]
+                        .into_iter()
+                        .map(String::from)
+                        .collect::<BTreeSet<_>>(),
+                )]),
+            },
+        );
+        self.auth = Some(AuthConfig {
+            database_id,
+            user_entity_id: entity_id,
+            external_id_field_id: id_field.id,
+            identifier_field_id: email_field.id,
+            password_field_id: password_field.id,
+            registration_policy: RegistrationPolicy::Disabled,
+            password_login: true,
+        });
+        true
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]

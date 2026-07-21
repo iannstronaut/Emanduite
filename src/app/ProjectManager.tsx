@@ -5,7 +5,7 @@ import { selectBlueprintFile, selectProjectDirectory, selectSqliteFile } from ".
 interface Props {
   session: ProjectSession | null;
   recent: RecentProject[];
-  onCreate: (input: { directory: string; name: string; sqlitePath: string }) => void;
+  onCreate: (input: { directory: string; name: string; sqlitePath: string; superadminEmail: string; superadminPassword: string }) => void;
   onOpen: (path: string) => void;
   onDuplicate: (input: { sourcePath: string; targetDirectory: string; name: string }) => void;
   onRemove: (path: string) => void;
@@ -15,6 +15,8 @@ export function ProjectManager({ session, recent, onCreate, onOpen, onDuplicate,
   const [name, setName] = useState("");
   const [directory, setDirectory] = useState("");
   const [sqlitePath, setSqlitePath] = useState("");
+  const [superadminEmail, setSuperadminEmail] = useState("superadmin@local");
+  const [superadminPassword, setSuperadminPassword] = useState("");
 
   const browseDirectory = async () => { const value = await selectProjectDirectory(); if (value) setDirectory(value); };
   const browseSqlite = async () => { const value = await selectSqliteFile(); if (value) setSqlitePath(value); };
@@ -28,12 +30,14 @@ export function ProjectManager({ session, recent, onCreate, onOpen, onDuplicate,
   return <div className="page project-page">
     <div className="page-heading"><div><span className="eyebrow">PROJECT MANAGER</span><h1>Local workspaces</h1><p>Create, reopen, or duplicate a versioned Emanduite project.</p></div><button className="secondary" onClick={openFromDisk}>Open project file</button></div>
     <div className="project-layout">
-      <form className="panel create-panel" onSubmit={(event) => { event.preventDefault(); onCreate({ name, directory, sqlitePath }); }}>
+      <form className="panel create-panel" onSubmit={(event) => { event.preventDefault(); onCreate({ name, directory, sqlitePath, superadminEmail, superadminPassword }); }}>
         <div className="panel-title"><span>New project</span><small>SQLite-first</small></div>
         <label>Project name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Inventory Workspace" required /></label>
         <label>Project directory<div className="field-action"><input value={directory} readOnly placeholder="Select an empty directory" /><button type="button" onClick={browseDirectory}>Browse</button></div></label>
         <label>SQLite database<div className="field-action"><input value={sqlitePath} readOnly placeholder="Select .sqlite, .sqlite3, or .db" /><button type="button" onClick={browseSqlite}>Browse</button></div></label>
-        <button className="primary" disabled={!name.trim() || !directory || !sqlitePath}>Create project</button>
+        <label>Superadmin email<input type="email" value={superadminEmail} onChange={(event) => setSuperadminEmail(event.target.value)} required /></label>
+        <label>Superadmin password<input type="password" value={superadminPassword} onChange={(event) => setSuperadminPassword(event.target.value)} minLength={12} placeholder="At least 12 characters" required /></label>
+        <button className="primary" disabled={!name.trim() || !directory || !sqlitePath || !superadminEmail.trim() || superadminPassword.length < 12}>Create project</button>
       </form>
       <section className="panel recent-panel">
         <div className="panel-title"><span>Recent projects</span><small>{recent.length}/12</small></div>

@@ -843,6 +843,30 @@ mod tests {
     use crate::blueprint::Blueprint;
     use sqlx::Connection;
 
+    #[test]
+    fn deserializes_camel_case_schema_operations_from_the_frontend() {
+        let operation = serde_json::from_value::<SchemaOperation>(serde_json::json!({
+            "kind": "addTable",
+            "operationId": Uuid::new_v4().to_string(),
+            "table": {
+                "id": Uuid::new_v4().to_string(),
+                "name": "inventory_items",
+                "columns": [{
+                    "id": Uuid::new_v4().to_string(),
+                    "name": "id",
+                    "nativeType": "INTEGER",
+                    "canonicalType": "integer",
+                    "nullable": false,
+                    "primaryKey": true
+                }],
+                "foreignKeys": [],
+                "indexes": []
+            }
+        }))
+        .unwrap();
+        assert!(matches!(operation, SchemaOperation::AddTable { .. }));
+    }
+
     async fn fixture() -> (tempfile::TempDir, DatabaseConfig) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("fixture.sqlite");

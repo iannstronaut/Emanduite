@@ -1,12 +1,4 @@
 /docs/*
-!/docs/dev/
-!/docs/dev/Phase-1.md
-!/docs/dev/Phase-2.md
-!/docs/dev/Phase-3.md
-!/docs/dev/Phase-4.md
-!/docs/dev/Phase-5.md
-!/docs/dev/Phase-6.md
-!/docs/dev/Phase-7.md
 node_modules/
 /src-tauri/gen/
 target/
@@ -19,3 +11,4 @@ phase5-gate/
 *.log
 *.tsbuildinfo
 .github/
+.cargo-test-default-schema

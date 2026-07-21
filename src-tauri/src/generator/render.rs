@@ -10,7 +10,10 @@ use crate::{
     error::AppError,
 };
 
-use super::{ownership::validate_relative_path, GeneratedFile, Ownership};
+use super::{
+    ownership::{hash_bytes, validate_relative_path},
+    GeneratedFile, Ownership,
+};
 
 #[derive(Clone)]
 struct EntitySpec {
@@ -109,20 +112,9 @@ fn static_files(
         }
         DatabaseProvider::Mysql => "DATABASE_URL=\"mysql://USER:PASSWORD@HOST:3306/DATABASE\"\n",
     };
-    let navigation = entities
-        .iter()
-        .map(|entity| {
-            format!(
-                r#"          <Link href="/{slug}">{label}</Link>"#,
-                slug = entity.slug,
-                label = escape_html(&entity.label)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
     let entity_cards = entities
         .iter()
-        .map(|entity| format!(r#"        <Link className="card" href="/{slug}"><strong>{label}</strong><span>Open generated CRUD workspace</span></Link>"#, slug = entity.slug, label = escape_html(&entity.label)))
+        .map(|entity| format!(r#"        <Link className="group" href="/{slug}"><Card className="h-full border-border/70 shadow-none transition-all duration-200 hover:-translate-y-0.5 hover:border-foreground/20 hover:shadow-md"><CardHeader className="p-5"><div className="flex items-start justify-between gap-4"><div className="grid size-9 place-items-center rounded-lg bg-muted"><Database className="size-4 text-muted-foreground" /></div><ArrowUpRight className="size-4 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" /></div><CardTitle className="mt-5 text-base">{label}</CardTitle><CardDescription>Browse and manage records.</CardDescription></CardHeader></Card></Link>"#, slug = entity.slug, label = escape_html(&entity.label)))
         .collect::<Vec<_>>()
         .join("\n");
     let package = format!(
@@ -148,12 +140,16 @@ fn static_files(
     "@tanstack/react-table": "8.21.3",
     "bcryptjs": "3.0.3",
     "better-sqlite3": "12.4.1",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
     "dotenv": "17.2.3",
+    "lucide-react": "0.468.0",
     "next": "16.2.10",
     "next-auth": "4.24.14",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-hook-form": "7.81.0",
+    "tailwind-merge": "2.5.5",
     "zod": "4.4.1"
   }},
   "devDependencies": {{
@@ -182,19 +178,65 @@ fn static_files(
         generated("tsconfig.json", TSCONFIG),
         generated("vitest.config.ts", "import { resolve } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\nimport { defineConfig } from \"vitest/config\";\n\nconst root = fileURLToPath(new URL(\".\", import.meta.url));\nexport default defineConfig({ resolve: { alias: { \"@\": resolve(root, \"src\") } }, test: { environment: \"node\", include: [\"src/**/*.test.ts\"] } });\n"),
         generated("prisma.config.ts", PRISMA_CONFIG),
+        generated("components.json", SHADCN_COMPONENTS_JSON),
         user(".env", format!("DATABASE_URL={}\n", dotenv_quote(&database_url))),
-        generated(".env.example", env_example),
-        generated(".gitignore", "node_modules/\n.next/\n.env\nsrc/generated/prisma/\n*.log\n"),
+        generated(".env.local", format!("NEXTAUTH_URL=http://localhost:3000\nNEXTAUTH_SECRET={}\n", hash_bytes(blueprint.project_id.as_bytes()))),
+        generated(".env.example", format!("{env_example}NEXTAUTH_URL=http://localhost:3000\nNEXTAUTH_SECRET=replace-with-a-long-random-value\n")),
+        generated(".gitignore", "node_modules/\n.next/\n.env\n.env.local\nsrc/generated/prisma/\n*.log\n"),
         generated("src/lib/prisma.ts", prisma_client(blueprint.databases.main.provider)),
+        generated("src/lib/utils.ts", SHADCN_UTILS),
+        generated("src/components/ui/button.tsx", SHADCN_BUTTON),
+        generated("src/components/ui/card.tsx", SHADCN_CARD),
+        generated("src/components/ui/input.tsx", SHADCN_INPUT),
+        generated("src/components/ui/label.tsx", SHADCN_LABEL),
+        generated("src/components/ui/table.tsx", SHADCN_TABLE),
+        generated("src/components/ui/textarea.tsx", SHADCN_TEXTAREA),
+        generated("src/components/app-sidebar.tsx", app_sidebar(&blueprint.project_name, entities)),
         generated("src/lib/query-contract.ts", QUERY_CONTRACT),
         generated("src/lib/query-contract.test.ts", QUERY_CONTRACT_TEST),
         generated("src/extensions/types.ts", EXTENSION_TYPES),
         generated("src/extensions/registry.ts", extension_registry(blueprint)),
         generated("src/app/globals.css", GLOBAL_CSS),
         generated("src/app/layout.tsx", LAYOUT.replace("{{PROJECT_NAME}}", &escape_tsx(&blueprint.project_name))),
-        generated("src/app/(dashboard)/layout.tsx", DASHBOARD_LAYOUT.replace("{{NAVIGATION}}", &navigation)),
+        generated("src/app/(dashboard)/layout.tsx", (if blueprint.auth.is_some() { DASHBOARD_LAYOUT_AUTH } else { DASHBOARD_LAYOUT }).replace("{{PROJECT_NAME}}", &escape_tsx(&blueprint.project_name))),
         generated("src/app/(dashboard)/page.tsx", DASHBOARD_PAGE.replace("{{ENTITY_CARDS}}", &entity_cards)),
     ])
+}
+
+fn app_sidebar(project_name: &str, entities: &[EntitySpec]) -> String {
+    let items = entities
+        .iter()
+        .map(|entity| {
+            format!(
+                "  {{ href: {}, label: {} }},",
+                js_string(&format!("/{}", entity.slug)),
+                js_string(&entity.label)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#""use client";
+import Link from "next/link";
+import {{ usePathname }} from "next/navigation";
+import {{ Boxes, Database, LayoutDashboard }} from "lucide-react";
+import {{ cn }} from "@/lib/utils";
+
+const navigation = [
+{items}
+] as const;
+
+function isActive(pathname: string, href: string) {{ return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${{href}}/`); }}
+
+export function AppSidebar() {{
+  const pathname = usePathname();
+  const itemClass = (active: boolean) => cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors", active ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90" : "text-muted-foreground hover:bg-muted hover:text-foreground");
+  return <aside className="hidden border-r bg-background md:fixed md:inset-y-0 md:flex md:w-60 md:flex-col"><div className="flex h-16 items-center gap-2 border-b px-5"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Boxes className="size-4" /></span><Link className="truncate text-sm font-semibold" href="/">{project_name}</Link></div><nav className="grid gap-1 p-3"><Link className={{itemClass(isActive(pathname, "/"))}} href="/"><LayoutDashboard className="size-4" />Overview</Link>{{navigation.map((item) => <Link className={{itemClass(isActive(pathname, item.href))}} href={{item.href}} key={{item.href}}><Database className="size-4" />{{item.label}}</Link>)}}</nav><div className="mt-auto border-t px-5 py-4 text-xs text-muted-foreground">Generated by Emanduite</div></aside>;
+}}
+"#,
+        items = items,
+        project_name = escape_tsx(project_name)
+    )
 }
 
 fn security_files(
@@ -282,27 +324,43 @@ fn auth_files(
         auth.registration_policy,
         crate::blueprint::RegistrationPolicy::Open
     );
+    let auth_secret = hash_bytes(blueprint.project_id.as_bytes());
     let auth_source = format!(
         r#"import NextAuth, {{ type NextAuthOptions }} from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import {{ compare }} from "bcryptjs";
 import {{ prisma }} from "@/lib/prisma";
 
-export const authOptions: NextAuthOptions = {{ session: {{ strategy: "jwt" }}, pages: {{ signIn: "/login" }}, providers: [CredentialsProvider({{ name: "Credentials", credentials: {{ identifier: {{ label: "Identifier", type: "text" }}, password: {{ label: "Password", type: "password" }} }}, async authorize(credentials) {{
+export const authOptions: NextAuthOptions = {{
+  secret: process.env.NEXTAUTH_SECRET ?? "{auth_secret}",
+  session: {{ strategy: "jwt" }},
+  pages: {{ signIn: "/login" }},
+  providers: [CredentialsProvider({{
+    name: "Credentials",
+    credentials: {{ identifier: {{ label: "Identifier", type: "text" }}, password: {{ label: "Password", type: "password" }} }},
+    async authorize(credentials) {{
   const identifier = credentials?.identifier?.trim(); const password = credentials?.password;
   if (!identifier || !password) return null;
   const user = await prisma.{delegate}.findFirst({{ where: {{ {identifier}: identifier }} }});
   const candidate = user as Record<string, unknown> | null;
   if (!candidate || !(await compare(password, String(candidate.{password} ?? "")))) return null;
-  const subject = await prisma.sysAuthSubject.findUnique({{ where: {{ externalId: String(candidate.{external}) }} }});
-  return {{ id: String(candidate.{external}), name: String(candidate.{identifier}), roleKey: subject?.roleKey ?? "" }} as never;
-}}) ], callbacks: {{ async jwt({{ token, user }}) {{ if (user) token.roleKey = (user as {{ roleKey?: string }}).roleKey; return token; }}, async session({{ session, token }}) {{ (session.user as {{ roleKey?: string }} | undefined)!.roleKey = String(token.roleKey ?? ""); return session; }} }} }};
+  const roleKey = Number(candidate.roleId ?? 0) === 1 ? "superadmin" : "";
+  if (!roleKey) return null;
+  return {{ id: String(candidate.{external}), name: String(candidate.{identifier}), roleKey }} as never;
+    }}
+  }})],
+  callbacks: {{
+    async jwt({{ token, user }}) {{ if (user) token.roleKey = (user as {{ roleKey?: string }}).roleKey; return token; }},
+    async session({{ session, token }}) {{ (session.user as {{ roleKey?: string }} | undefined)!.roleKey = String(token.roleKey ?? ""); return session; }}
+  }}
+}};
 export default NextAuth(authOptions);
 "#,
         delegate = user.delegate,
         identifier = identifier,
         password = password,
-        external = external
+        external = external,
+        auth_secret = auth_secret
     );
     let access = r#"import { getServerSession } from "next-auth";
 import { authOptions } from "@/auth";
@@ -314,16 +372,32 @@ export async function requirePermission(resource: string, action: PermissionActi
   return session;
 }
 "#;
-    let proxy = r#"import { getToken } from "next-auth/jwt";
-import { NextResponse, type NextRequest } from "next/server";
+    let proxy = format!(
+        r#"import {{ getToken }} from "next-auth/jwt";
+import {{ NextResponse, type NextRequest }} from "next/server";
 
-export async function proxy(request: NextRequest) { const token = await getToken({ req: request }); if (!token) return NextResponse.redirect(new URL("/login", request.url)); return NextResponse.next(); }
-export const config = { matcher: ["/((?!api/auth|login|register|_next|favicon.ico).*)"] };
-"#;
+const authSecret = process.env.NEXTAUTH_SECRET ?? "{auth_secret}";
+export async function proxy(request: NextRequest) {{
+  try {{
+    const token = await getToken({{ req: request, secret: authSecret }});
+    if (token) return NextResponse.next();
+  }} catch {{
+    // Fail closed when session verification is unavailable.
+  }}
+  return NextResponse.redirect(new URL("/login", request.url));
+}}
+export const config = {{ matcher: ["/((?!api/auth|login|register|_next|favicon.ico).*)"] }};
+"#,
+        auth_secret = auth_secret
+    );
     let login = r#""use client";
 import { signIn } from "next-auth/react";
 import { useState } from "react";
-export default function LoginPage() { const [error,setError] = useState(""); return <main className="auth-page"><form className="form" action={async (form) => { const result = await signIn("credentials", { identifier: String(form.get("identifier") ?? ""), password: String(form.get("password") ?? ""), redirect: true, callbackUrl: "/" }); if (result?.error) setError("Invalid credentials"); }}><h1>Sign in</h1><label>Identifier<input name="identifier" required /></label><label>Password<input name="password" type="password" required /></label>{error && <p className="error" role="alert">{error}</p>}<button type="submit">Sign in</button></form></main>; }
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+export default function LoginPage() { const [error,setError] = useState(""); return <main className="grid min-h-screen place-items-center bg-muted/40 p-4"><Card className="w-full max-w-sm"><CardHeader><CardTitle>Sign in</CardTitle><CardDescription>Use the account provisioned for this workspace.</CardDescription></CardHeader><CardContent><form className="grid gap-5" action={async (form) => { const result = await signIn("credentials", { identifier: String(form.get("identifier") ?? ""), password: String(form.get("password") ?? ""), redirect: true, callbackUrl: "/" }); if (result?.error) setError("Invalid credentials"); }}><div className="grid gap-2"><Label htmlFor="identifier">Identifier</Label><Input id="identifier" name="identifier" required /></div><div className="grid gap-2"><Label htmlFor="password">Password</Label><Input id="password" name="password" type="password" required /></div>{error && <p className="text-sm text-destructive" role="alert">{error}</p>}<Button type="submit">Sign in</Button></form></CardContent></Card></main>; }
 "#;
     let mut files = vec![
         generated("src/auth.ts", auth_source),
@@ -499,6 +573,9 @@ fn prisma_schema(blueprint: &Blueprint) -> Result<String, AppError> {
     let mut output = format!("generator client {{\n  provider = \"prisma-client\"\n  output = \"../src/generated/prisma\"\n  moduleFormat = \"esm\"\n}}\n\ndatasource db {{\n  provider = \"{provider}\"\n}}\n");
     let mut models = BTreeSet::new();
     for table in &blueprint.databases.main.tables {
+        if is_system_table(&table.name) {
+            continue;
+        }
         let model = pascal_identifier(&table.name);
         if !models.insert(model.clone()) {
             return Err(AppError::Conflict);
@@ -556,6 +633,13 @@ fn prisma_schema(blueprint: &Blueprint) -> Result<String, AppError> {
     }
     output.push_str(SYSTEM_MODELS);
     Ok(output)
+}
+
+fn is_system_table(name: &str) -> bool {
+    matches!(
+        name,
+        "sys_roles" | "sys_auth_subjects" | "sys_resources" | "sys_permissions" | "sys_audit_logs"
+    )
 }
 
 fn prisma_type(kind: CanonicalType) -> &'static str {
@@ -1010,7 +1094,7 @@ export async function get{model}(id: string) {{
 }
 
 fn entity_form(entity: &EntitySpec) -> String {
-    let imports = format!("import {{ {delegate}Schema, type {model}FormInput, type {model}Input }} from \"./schema\";\nimport {{ create{model}, update{model} }} from \"./actions\";", delegate=entity.delegate, model=entity.model);
+    let imports = format!("import {{ {delegate}Schema, type {model}FormInput, type {model}Input }} from \"./schema\";\nimport {{ create{model}, update{model} }} from \"./actions\";\nimport {{ Button }} from \"@/components/ui/button\";\nimport {{ Card, CardContent, CardFooter }} from \"@/components/ui/card\";\nimport {{ Input }} from \"@/components/ui/input\";\nimport {{ Label }} from \"@/components/ui/label\";\nimport {{ Textarea }} from \"@/components/ui/textarea\";", delegate=entity.delegate, model=entity.model);
     let controls = entity
         .fields
         .iter()
@@ -1030,7 +1114,7 @@ export function {model}Form({{ id, initial }}: {{ id?: string; initial?: Record<
   const router = useRouter(); const [serverError,setServerError] = useState("");
   const {{ register, handleSubmit, formState: {{ errors, isSubmitting }} }} = useForm<{model}FormInput, unknown, {model}Input>({{ resolver: zodResolver({delegate}Schema), defaultValues: initial as never }});
   const submit = handleSubmit(async (values) => {{ setServerError(""); const result = id ? await update{model}(id, values) : await create{model}(values); if (!result.ok) {{ setServerError(Object.values(result.errors).flat().join("; ")); return; }} router.push("/{slug}"); router.refresh(); }});
-  return <form className="form" onSubmit={{submit}}>{controls}{{serverError && <p className="error" role="alert">{{serverError}}</p>}}<button className="button" disabled={{isSubmitting}} type="submit">{{isSubmitting ? "Saving…" : "Save"}}</button></form>;
+  return <Card className="mt-6 max-w-2xl border-border/70 shadow-sm"><form onSubmit={{submit}}><CardContent className="grid gap-5 p-5 sm:p-6">{controls}{{serverError && <p className="text-sm text-destructive" role="alert">{{serverError}}</p>}}</CardContent><CardFooter className="justify-end border-t bg-muted/20 px-5 py-4 sm:px-6"><Button disabled={{isSubmitting}} type="submit">{{isSubmitting ? "Saving..." : "Save changes"}}</Button></CardFooter></form></Card>;
 }}
 "#,
         imports = imports,
@@ -1044,18 +1128,19 @@ export function {model}Form({{ id, initial }}: {{ id?: string; initial?: Record<
 fn form_control(field: &FieldSpec) -> String {
     let key = &field.prisma;
     let label = escape_tsx(&field.key);
-    let error = format!("{{errors.{key}?.message && <span className=\"error\">{{String(errors.{key}?.message)}}</span>}}");
+    let error = format!("{{errors.{key}?.message && <span className=\"text-sm text-destructive\">{{String(errors.{key}?.message)}}</span>}}");
     let input = match field.control.as_str() {
-        "textarea" => format!("<textarea {{...register(\"{key}\")}} />"),
-        "checkbox" => format!("<input type=\"checkbox\" {{...register(\"{key}\")}} />"),
-        "date" => format!("<input type=\"datetime-local\" {{...register(\"{key}\")}} />"),
-        "number" => format!("<input type=\"number\" step=\"any\" {{...register(\"{key}\")}} />"),
-        _ => format!("<input type=\"text\" {{...register(\"{key}\")}} />"),
+        "textarea" => format!("<Textarea id=\"{key}\" {{...register(\"{key}\")}} />"),
+        "checkbox" => format!("<Input id=\"{key}\" className=\"h-4 w-4\" type=\"checkbox\" {{...register(\"{key}\")}} />"),
+        "date" => format!("<Input id=\"{key}\" type=\"datetime-local\" {{...register(\"{key}\")}} />"),
+        "number" => format!("<Input id=\"{key}\" type=\"number\" step=\"any\" {{...register(\"{key}\")}} />"),
+        _ => format!("<Input id=\"{key}\" type=\"text\" {{...register(\"{key}\")}} />"),
     };
-    format!("<label><span>{label}</span>{input}{error}</label>")
+    format!("<div className=\"grid gap-2\"><Label htmlFor=\"{key}\">{label}</Label>{input}{error}</div>")
 }
 
 fn entity_table(entity: &EntitySpec) -> String {
+    let column_count = entity.fields.iter().filter(|field| field.show_list).count() + 1;
     let columns = entity
         .fields
         .iter()
@@ -1074,35 +1159,43 @@ fn entity_table(entity: &EntitySpec) -> String {
 "use client";
 import Link from "next/link";
 import {{ createColumnHelper, flexRender, getCoreRowModel, useReactTable }} from "@tanstack/react-table";
+import {{ Table, TableBody, TableCell, TableHead, TableHeader, TableRow }} from "@/components/ui/table";
 type Row = Record<string,string | number | boolean | null>;
 const helper = createColumnHelper<Row>();
 const columns = [
 {columns}
 ].map((column) => helper.accessor(column.accessorKey, {{ header: column.header, cell: (context) => String(context.getValue() ?? "") }}));
-export function {model}Table({{ rows }}: {{ rows: Row[] }}) {{ const table = useReactTable({{ data: rows, columns, getCoreRowModel: getCoreRowModel() }}); return <table><thead>{{table.getHeaderGroups().map((group) => <tr key={{group.id}}>{{group.headers.map((header) => <th key={{header.id}}>{{flexRender(header.column.columnDef.header, header.getContext())}}</th>)}}<th>Actions</th></tr>)}}</thead><tbody>{{table.getRowModel().rows.map((row) => <tr key={{row.id}}>{{row.getVisibleCells().map((cell) => <td key={{cell.id}}>{{flexRender(cell.column.columnDef.cell, cell.getContext())}}</td>)}}<td><div className="actions"><Link href={{`/{slug}/${{String(row.original.{pk})}}`}}>View</Link><Link href={{`/{slug}/${{String(row.original.{pk})}}/edit`}}>Edit</Link></div></td></tr>)}}</tbody></table>; }}
+export function {model}Table({{ rows }}: {{ rows: Row[] }}) {{ const table = useReactTable({{ data: rows, columns, getCoreRowModel: getCoreRowModel() }}); return <Table><TableHeader>{{table.getHeaderGroups().map((group) => <TableRow key={{group.id}}>{{group.headers.map((header) => <TableHead key={{header.id}}>{{flexRender(header.column.columnDef.header, header.getContext())}}</TableHead>)}}<TableHead className="w-28 text-right">Actions</TableHead></TableRow>)}}</TableHeader><TableBody>{{table.getRowModel().rows.length === 0 ? <TableRow><TableCell className="h-28 text-center text-muted-foreground" colSpan={{{column_count}}}>No records found.</TableCell></TableRow> : table.getRowModel().rows.map((row) => <TableRow key={{row.id}}>{{row.getVisibleCells().map((cell) => <TableCell key={{cell.id}}>{{flexRender(cell.column.columnDef.cell, cell.getContext())}}</TableCell>)}}<TableCell><div className="flex justify-end gap-3"><Link className="text-sm font-medium text-foreground/80 transition-colors hover:text-foreground" href={{`/{slug}/${{String(row.original.{pk})}}`}}>View</Link><Link className="text-sm font-medium text-foreground/80 transition-colors hover:text-foreground" href={{`/{slug}/${{String(row.original.{pk})}}/edit`}}>Edit</Link></div></TableCell></TableRow>)}}</TableBody></Table>; }}
 "#,
         columns = columns,
         model = entity.model,
         slug = entity.slug,
-        pk = entity.primary.prisma
+        pk = entity.primary.prisma,
+        column_count = column_count
     )
 }
 
 fn entity_list_page(entity: &EntitySpec) -> String {
     format!(
-        r#"import {{ list{model} }} from "@/features/{slug}/query";
+        r#"import Link from "next/link";
+import {{ Plus, Search }} from "lucide-react";
+import {{ list{model} }} from "@/features/{slug}/query";
 import {{ {model}Table }} from "@/features/{slug}/table";
+import {{ Button }} from "@/components/ui/button";
+import {{ Card, CardContent }} from "@/components/ui/card";
+import {{ Input }} from "@/components/ui/input";
 export const dynamic = "force-dynamic";
-export default async function Page({{ searchParams }}: {{ searchParams: Promise<Record<string,string | string[] | undefined>> }}) {{ const raw = await searchParams; const params = new URLSearchParams(); for (const [key,value] of Object.entries(raw)) if (typeof value === "string") params.set(key,value); const result = await list{model}(params); return <section><p className="eyebrow">ENTITY</p><h1>{label}</h1><div className="toolbar"><form><input aria-label="Search" name="search" defaultValue={{result.query.search}} placeholder="Search…"/><button type="submit">Search</button></form><a className="button" href="/{slug}/create">Create</a></div><{model}Table rows={{result.rows}}/><div className="pagination"><span>{{result.total}} records</span><span>Page {{result.query.page}}</span></div></section>; }}
+export default async function Page({{ searchParams }}: {{ searchParams: Promise<Record<string,string | string[] | undefined>> }}) {{ const raw = await searchParams; const params = new URLSearchParams(); for (const [key,value] of Object.entries(raw)) if (typeof value === "string") params.set(key,value); const result = await list{model}(params); return <section className="mx-auto max-w-6xl space-y-5"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Records</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">{label}</h1><p className="mt-1 text-sm text-muted-foreground">Manage your {label_lower} records.</p></div><Link className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90" href="/{slug}/create"><Plus className="size-4" />Create</Link></div><Card className="border-border/70 shadow-sm"><CardContent className="p-3 sm:p-4"><form className="flex gap-2"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" aria-label="Search" name="search" defaultValue={{result.query.search}} placeholder="Search records..."/></div><Button type="submit" variant="outline">Search</Button></form></CardContent><div className="border-t"><{model}Table rows={{result.rows}}/></div><div className="flex items-center justify-between border-t px-4 py-3 text-sm text-muted-foreground"><span>{{result.total}} records</span><span>Page {{result.query.page}}</span></div></Card></section>; }}
 "#,
         model = entity.model,
         slug = entity.slug,
-        label = escape_tsx(&entity.label)
+        label = escape_tsx(&entity.label),
+        label_lower = escape_tsx(&entity.label.to_lowercase())
     )
 }
 
 fn entity_create_page(entity: &EntitySpec) -> String {
-    format!("import {{ {model}Form }} from \"@/features/{slug}/form\";\nexport default function Page() {{ return <section><p className=\"eyebrow\">CREATE</p><h1>New {label}</h1><{model}Form /></section>; }}\n", model=entity.model, slug=entity.slug, label=escape_tsx(&entity.label))
+    format!("import {{ {model}Form }} from \"@/features/{slug}/form\";\nexport default function Page() {{ return <section className=\"mx-auto max-w-6xl\"><p className=\"text-xs font-medium uppercase tracking-widest text-muted-foreground\">Create record</p><h1 className=\"mt-1 text-2xl font-semibold tracking-tight\">New {label}</h1><p className=\"mt-1 text-sm text-muted-foreground\">Add a new record to this collection.</p><{model}Form /></section>; }}\n", model=entity.model, slug=entity.slug, label=escape_tsx(&entity.label))
 }
 
 fn entity_view_page(entity: &EntitySpec) -> String {
@@ -1123,8 +1216,9 @@ fn entity_view_page(entity: &EntitySpec) -> String {
         r#"import {{ notFound, redirect }} from "next/navigation";
 import {{ get{model} }} from "@/features/{slug}/query";
 import {{ delete{model} }} from "@/features/{slug}/actions";
+import {{ Card, CardContent }} from "@/components/ui/card";
 export const dynamic = "force-dynamic";
-export default async function Page({{ params }}: {{ params: Promise<{{ id: string }}> }}) {{ const {{ id }} = await params; const row = await get{model}(id); if (!row) notFound(); async function remove() {{ "use server"; await delete{model}(id); redirect("/{slug}"); }} return <section><p className="eyebrow">DETAIL</p><h1>{label}</h1><div className="toolbar"><a className="button" href={{`/{slug}/${{id}}/edit`}}>Edit</a><form action={{remove}}><button type="submit">Delete</button></form></div><dl className="detail">{rows}</dl></section>; }}
+export default async function Page({{ params }}: {{ params: Promise<{{ id: string }}> }}) {{ const {{ id }} = await params; const row = await get{model}(id); if (!row) notFound(); async function remove() {{ "use server"; await delete{model}(id); redirect("/{slug}"); }} return <section className="mx-auto max-w-6xl space-y-5"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Record detail</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">{label}</h1></div><div className="flex gap-2"><a className="inline-flex h-9 items-center justify-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90" href={{`/{slug}/${{id}}/edit`}}>Edit</a><form action={{remove}}><button className="inline-flex h-9 items-center justify-center rounded-md bg-destructive px-3 text-sm font-medium text-destructive-foreground shadow-sm hover:bg-destructive/90" type="submit">Delete</button></form></div></div><Card className="max-w-3xl border-border/70 shadow-sm"><CardContent className="p-0"><dl className="grid grid-cols-[minmax(9rem,1fr)_2fr] text-sm [&_dd]:border-b [&_dd]:p-3.5 [&_dt]:border-b [&_dt]:bg-muted/30 [&_dt]:p-3.5 [&_dt]:font-medium">{rows}</dl></CardContent></Card></section>; }}
 "#,
         model = entity.model,
         slug = entity.slug,
@@ -1139,7 +1233,7 @@ fn entity_edit_page(entity: &EntitySpec) -> String {
 import {{ get{model} }} from "@/features/{slug}/query";
 import {{ {model}Form }} from "@/features/{slug}/form";
 export const dynamic = "force-dynamic";
-export default async function Page({{ params }}: {{ params: Promise<{{ id: string }}> }}) {{ const {{ id }} = await params; const row = await get{model}(id); if (!row) notFound(); return <section><p className="eyebrow">EDIT</p><h1>Edit {label}</h1><{model}Form id={{id}} initial={{row}} /></section>; }}
+export default async function Page({{ params }}: {{ params: Promise<{{ id: string }}> }}) {{ const {{ id }} = await params; const row = await get{model}(id); if (!row) notFound(); return <section className="mx-auto max-w-6xl"><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Edit record</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">Edit {label}</h1><p className="mt-1 text-sm text-muted-foreground">Update the selected record.</p><{model}Form id={{id}} initial={{row}} /></section>; }}
 "#,
         model = entity.model,
         slug = entity.slug,
@@ -1456,31 +1550,93 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return <html lang="en"><body>{children}</body></html>;
 }"#;
 
+const SHADCN_COMPONENTS_JSON: &str = r#"{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": { "config": "", "css": "src/app/globals.css", "baseColor": "neutral", "cssVariables": true, "prefix": "" },
+  "aliases": { "components": "@/components", "utils": "@/lib/utils", "ui": "@/components/ui", "lib": "@/lib", "hooks": "@/hooks" },
+  "iconLibrary": "lucide"
+}"#;
+
+const SHADCN_UTILS: &str = r#"import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
+"#;
+
+const SHADCN_BUTTON: &str = r#"import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "@/lib/utils";
+
+const buttonVariants = cva("inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50", { variants: { variant: { default: "bg-primary text-primary-foreground shadow hover:bg-primary/90", destructive: "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90", outline: "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground", secondary: "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80", ghost: "hover:bg-accent hover:text-accent-foreground", link: "text-primary underline-offset-4 hover:underline" }, size: { default: "h-9 px-4 py-2", sm: "h-8 rounded-md px-3 text-xs", lg: "h-10 rounded-md px-8", icon: "h-9 w-9" } }, defaultVariants: { variant: "default", size: "default" } });
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {}
+export function Button({ className, variant, size, ...props }: ButtonProps) { return <button data-slot="button" className={cn(buttonVariants({ variant, size }), className)} {...props} />; }
+"#;
+
+const SHADCN_CARD: &str = r#"import { cn } from "@/lib/utils";
+export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) { return <div data-slot="card" className={cn("rounded-xl border bg-card text-card-foreground shadow", className)} {...props} />; }
+export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) { return <div data-slot="card-header" className={cn("flex flex-col space-y-1.5 p-6", className)} {...props} />; }
+export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) { return <h3 data-slot="card-title" className={cn("font-semibold leading-none tracking-tight", className)} {...props} />; }
+export function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) { return <p data-slot="card-description" className={cn("text-sm text-muted-foreground", className)} {...props} />; }
+export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) { return <div data-slot="card-content" className={cn("p-6 pt-0", className)} {...props} />; }
+export function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) { return <div data-slot="card-footer" className={cn("flex items-center p-6 pt-0", className)} {...props} />; }
+"#;
+
+const SHADCN_INPUT: &str = r#"import { cn } from "@/lib/utils";
+export function Input({ className, type, ...props }: React.InputHTMLAttributes<HTMLInputElement>) { return <input type={type} data-slot="input" className={cn("flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50", className)} {...props} />; }
+"#;
+
+const SHADCN_TEXTAREA: &str = r#"import { cn } from "@/lib/utils";
+export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) { return <textarea data-slot="textarea" className={cn("flex min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50", className)} {...props} />; }
+"#;
+
+const SHADCN_LABEL: &str = r#"import { cn } from "@/lib/utils";
+export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) { return <label data-slot="label" className={cn("text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70", className)} {...props} />; }
+"#;
+
+const SHADCN_TABLE: &str = r#"import { cn } from "@/lib/utils";
+export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTableElement>) { return <div data-slot="table-container" className="relative w-full overflow-auto"><table data-slot="table" className={cn("w-full caption-bottom text-sm", className)} {...props} /></div>; }
+export function TableHeader({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) { return <thead data-slot="table-header" className={cn("[&_tr]:border-b", className)} {...props} />; }
+export function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) { return <tbody data-slot="table-body" className={cn("[&_tr:last-child]:border-0", className)} {...props} />; }
+export function TableRow({ className, ...props }: React.HTMLAttributes<HTMLTableRowElement>) { return <tr data-slot="table-row" className={cn("border-b transition-colors hover:bg-muted/50", className)} {...props} />; }
+export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) { return <th data-slot="table-head" className={cn("h-10 px-2 text-left align-middle font-medium text-muted-foreground", className)} {...props} />; }
+export function TableCell({ className, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) { return <td data-slot="table-cell" className={cn("p-2 align-middle", className)} {...props} />; }
+"#;
+
 const DASHBOARD_LAYOUT: &str = r#"import Link from "next/link";
+import { Boxes } from "lucide-react";
+import { AppSidebar } from "@/components/app-sidebar";
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  return <div className="shell"><aside><a className="brand" href="/">Emanduite</a><nav>
-{{NAVIGATION}}
-  </nav></aside><main>{children}</main></div>;
+  return <div className="min-h-screen bg-muted/30"><AppSidebar /><div className="md:pl-60"><header className="sticky top-0 z-20 hidden h-16 items-center justify-between border-b bg-background/80 px-8 backdrop-blur md:flex"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Workspace</p><p className="text-sm font-semibold">{{PROJECT_NAME}}</p></div><div className="rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground">Generated admin</div></header><header className="flex h-14 items-center border-b bg-background/80 px-5 backdrop-blur md:hidden"><Link className="flex items-center gap-2 text-sm font-semibold" href="/"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Boxes className="size-4" /></span>{{PROJECT_NAME}}</Link></header><main className="px-5 py-6 sm:px-8 sm:py-8">{children}</main></div></div>;
+}"#;
+
+const DASHBOARD_LAYOUT_AUTH: &str = r#"import Link from "next/link";
+import { Boxes } from "lucide-react";
+import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
+import { authOptions } from "@/auth";
+import { AppSidebar } from "@/components/app-sidebar";
+
+export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) redirect("/login");
+  return <div className="min-h-screen bg-muted/30"><AppSidebar /><div className="md:pl-60"><header className="sticky top-0 z-20 hidden h-16 items-center justify-between border-b bg-background/80 px-8 backdrop-blur md:flex"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Workspace</p><p className="text-sm font-semibold">{{PROJECT_NAME}}</p></div><div className="rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground">{session.user.name ?? "Administrator"}</div></header><header className="flex h-14 items-center border-b bg-background/80 px-5 backdrop-blur md:hidden"><Link className="flex items-center gap-2 text-sm font-semibold" href="/"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Boxes className="size-4" /></span>{{PROJECT_NAME}}</Link></header><main className="px-5 py-6 sm:px-8 sm:py-8">{children}</main></div></div>;
 }"#;
 
 const DASHBOARD_PAGE: &str = r#"import Link from "next/link";
+import { ArrowUpRight, Database, FolderKanban } from "lucide-react";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 export default function DashboardPage() {
-  return <section><p className="eyebrow">GENERATED ADMIN</p><h1>Dashboard</h1><p className="muted">Concrete CRUD routes generated from Blueprint v1.</p><div className="cards">
+  return <section className="mx-auto max-w-6xl space-y-7"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Workspace</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">Overview</h1><p className="mt-1 text-sm text-muted-foreground">Your generated admin workspace is ready.</p></div><div className="flex items-center gap-2 text-sm text-muted-foreground"><FolderKanban className="size-4" />Blueprint v1</div></div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
 {{ENTITY_CARDS}}
   </div></section>;
 }"#;
 
 const GLOBAL_CSS: &str = r#"@import "tailwindcss";
-:root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #07100e; color: #e2ece7; }
-* { box-sizing: border-box; } body { margin: 0; } a { color: inherit; text-decoration: none; }
-.shell { min-height: 100vh; display: grid; grid-template-columns: 220px 1fr; } aside { padding: 24px 16px; border-right: 1px solid #1b3831; background: #0a1714; }
-.brand { display: block; margin: 0 10px 25px; color: #50dda5; font-weight: 800; } nav { display: grid; gap: 5px; } nav a { padding: 9px 10px; border-radius: 5px; color: #91a9a0; } nav a:hover { background: #123027; color: #65e3b0; }
-main { min-width: 0; padding: 44px; } h1 { margin: 6px 0; font-size: 30px; } .eyebrow { color: #50dda5; font: 11px monospace; letter-spacing: .14em; } .muted { color: #82988f; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 14px; margin-top: 28px; }.card { display: grid; gap: 7px; padding: 18px; border: 1px solid #20473c; border-radius: 7px; background: #0c1a17; }.card span { color: #789087; font-size: 12px; }
-.toolbar { display: flex; gap: 8px; margin: 22px 0 14px; }.toolbar form { display: flex; gap: 7px; flex: 1; } input,select,textarea,button { min-height: 36px; padding: 7px 10px; border: 1px solid #2c4b43; border-radius: 4px; color: inherit; background: #08120f; } button,.button { cursor: pointer; }.button { display: inline-flex; align-items: center; padding: 8px 12px; border-radius: 4px; color: #06130e; background: #50dda5; font-weight: 700; }
-table { width: 100%; border-collapse: collapse; background: #0b1714; } th,td { padding: 10px; border: 1px solid #1c3831; text-align: left; font-size: 12px; } th { color: #8da49a; } .actions { display: flex; gap: 7px; } .pagination { display: flex; justify-content: space-between; padding: 13px 0; color: #879d94; }
-.form { max-width: 680px; display: grid; gap: 13px; margin-top: 24px; }.form label { display: grid; gap: 6px; color: #9bb0a8; font-size: 12px; }.error { color: #ff9b94; }.detail { max-width: 760px; display: grid; grid-template-columns: 180px 1fr; margin-top: 24px; border: 1px solid #203d36; }.detail dt,.detail dd { margin: 0; padding: 10px 12px; border-bottom: 1px solid #19322c; }.detail dt { color: #7d958c; }
-@media(max-width:800px){.shell{grid-template-columns:1fr}aside{border-right:0;border-bottom:1px solid #1b3831}main{padding:24px}}"#;
+
+:root { --background: oklch(1 0 0); --foreground: oklch(.145 0 0); --card: oklch(1 0 0); --card-foreground: oklch(.145 0 0); --primary: oklch(.205 0 0); --primary-foreground: oklch(.985 0 0); --secondary: oklch(.97 0 0); --secondary-foreground: oklch(.205 0 0); --muted: oklch(.97 0 0); --muted-foreground: oklch(.556 0 0); --accent: oklch(.97 0 0); --accent-foreground: oklch(.205 0 0); --destructive: oklch(.577 .245 27.325); --destructive-foreground: oklch(.985 0 0); --border: oklch(.922 0 0); --input: oklch(.922 0 0); --ring: oklch(.708 0 0); --radius: .625rem; }
+@theme inline { --color-background: var(--background); --color-foreground: var(--foreground); --color-card: var(--card); --color-card-foreground: var(--card-foreground); --color-primary: var(--primary); --color-primary-foreground: var(--primary-foreground); --color-secondary: var(--secondary); --color-secondary-foreground: var(--secondary-foreground); --color-muted: var(--muted); --color-muted-foreground: var(--muted-foreground); --color-accent: var(--accent); --color-accent-foreground: var(--accent-foreground); --color-destructive: var(--destructive); --color-destructive-foreground: var(--destructive-foreground); --color-border: var(--border); --color-input: var(--input); --color-ring: var(--ring); --radius-sm: calc(var(--radius) - 4px); --radius-md: calc(var(--radius) - 2px); --radius-lg: var(--radius); }
+@layer base { * { @apply border-border; } body { @apply min-h-screen bg-background text-foreground antialiased; } }"#;
 
 const QUERY_CONTRACT: &str = r#"export type ScalarKind = "string" | "number" | "boolean" | "date";
 export type FilterOperator = "equals" | "contains" | "startsWith" | "lt" | "lte" | "gt" | "gte";

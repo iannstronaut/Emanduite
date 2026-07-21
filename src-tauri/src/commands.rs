@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::Path, sync::Mutex};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Manager, State};
 
@@ -54,6 +54,91 @@ pub struct SecretReference {
 #[serde(rename_all = "camelCase")]
 pub struct SecretPresence {
     pub exists: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiCompatibleModelRequest {
+    pub base_url: String,
+    pub secret_ref: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiCompatibleDesignRequest {
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f64,
+    pub max_output_tokens: u32,
+    pub secret_ref: String,
+    pub prompt: String,
+    pub schema_context: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelListResponse {
+    data: Vec<ModelListItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelListItem {
+    id: String,
+}
+
+fn openai_compatible_endpoint(base_url: &str, resource: &str) -> Result<url::Url, AppError> {
+    let mut base = url::Url::parse(base_url).map_err(|_| AppError::Validation)?;
+    if !matches!(base.scheme(), "http" | "https") {
+        return Err(AppError::Validation);
+    }
+    if !base.path().ends_with('/') {
+        let path = format!("{}/", base.path());
+        base.set_path(&path);
+    }
+    base.join(resource).map_err(|_| AppError::Validation)
+}
+
+fn compact_provider_message(value: &str) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut end = compact.len().min(320);
+    while end > 0 && !compact.is_char_boundary(end) {
+        end -= 1;
+    }
+    compact[..end].to_string()
+}
+
+fn content_from_chat_completion(value: &Value) -> Option<String> {
+    match value.pointer("/choices/0/message/content") {
+        Some(Value::String(text)) if !text.trim().is_empty() => Some(text.clone()),
+        Some(Value::Array(parts)) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| match part {
+                    Value::String(text) => Some(text.as_str()),
+                    Value::Object(_) => part.get("text").and_then(Value::as_str),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            (!text.trim().is_empty()).then_some(text)
+        }
+        _ => value
+            .pointer("/choices/0/text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_owned),
+    }
+}
+
+fn parse_model_json(content: &str) -> Result<Value, AppError> {
+    let trimmed = content.trim();
+    let trimmed = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .unwrap_or(trimmed);
+    let trimmed = trimmed.strip_suffix("```").unwrap_or(trimmed).trim();
+    serde_json::from_str(trimmed).map_err(|_| {
+        AppError::AiProvider("Provider response was not valid JSON. Try again or choose a model that supports structured JSON output.".into())
+    })
 }
 
 #[tauri::command]
@@ -141,6 +226,105 @@ pub fn delete_secret(secret_ref: String, state: State<'_, SecretState>) -> Comma
 }
 
 #[tauri::command]
+pub fn list_openai_compatible_models(
+    request: OpenAiCompatibleModelRequest,
+    state: State<'_, SecretState>,
+) -> CommandResponse<Vec<String>> {
+    CommandResponse::from_result(tauri::async_runtime::block_on(async {
+        let endpoint = openai_compatible_endpoint(&request.base_url, "models")?;
+        let api_key = state.0.get(&request.secret_ref)?;
+        let response = reqwest::Client::new()
+            .get(endpoint)
+            .bearer_auth(api_key)
+            .send()
+            .await
+            .map_err(|_| AppError::Internal)?;
+        if !response.status().is_success() {
+            return Err(AppError::Internal);
+        }
+        let mut models = response
+            .json::<ModelListResponse>()
+            .await
+            .map_err(|_| AppError::Internal)?
+            .data
+            .into_iter()
+            .map(|model| model.id)
+            .filter(|model| !model.trim().is_empty())
+            .collect::<Vec<_>>();
+        models.sort();
+        models.dedup();
+        Ok(models)
+    }))
+}
+
+#[tauri::command]
+pub fn generate_openai_compatible_design(
+    request: OpenAiCompatibleDesignRequest,
+    state: State<'_, SecretState>,
+) -> CommandResponse<Value> {
+    CommandResponse::from_result(tauri::async_runtime::block_on(async {
+        if request.prompt.trim().is_empty() || request.model.trim().is_empty() {
+            return Err(AppError::Validation);
+        }
+        let endpoint = openai_compatible_endpoint(&request.base_url, "chat/completions")?;
+        let api_key = state.0.get(&request.secret_ref)?;
+        let response = reqwest::Client::new()
+            .post(endpoint)
+            .bearer_auth(api_key)
+            .json(&serde_json::json!({
+                "model": request.model.trim(),
+                "temperature": request.temperature.clamp(0.0, 2.0),
+                "max_tokens": request.max_output_tokens.clamp(256, 8000),
+                "stream": false,
+                "response_format": { "type": "json_object" },
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You design additive SQLite database schemas for Emanduite. Return JSON only, with exactly this shape: {title:string,summary:string,assumptions:string[],tables:[{name:string,columns:[{name:string,nativeType:string,nullable:boolean,primaryKey:boolean,defaultValue?:string}],foreignKeys?:[{fromColumn:string,toTable:string,toColumn?:string,onDelete?:string}]}]}. Propose new business tables only. Never rename, alter, or propose these protected system tables: mst_roles, mst_users, sys_resources, sys_permissions, sys_audit_logs. Use lower_snake_case table and column names, SQLite types (INTEGER, TEXT, DECIMAL(12,2), DATETIME, BOOLEAN), and include an id INTEGER primary key on each table."
+                    },
+                    {
+                        "role": "user",
+                        "content": format!("Design request:\n{}\n\nCurrent Emanduite schema context (read-only):\n{}", request.prompt.trim(), request.schema_context)
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .map_err(|_| AppError::AiProvider("Unable to reach the configured AI provider.".into()))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::AiProvider(format!(
+                "AI provider returned HTTP {}. {}",
+                status,
+                compact_provider_message(&body)
+            )));
+        }
+        let body = response.text().await.map_err(|_| {
+            AppError::AiProvider("Unable to read the AI provider response body.".into())
+        })?;
+        let completed = serde_json::from_str::<Value>(&body).map_err(|_| {
+            AppError::AiProvider(format!(
+                "AI provider returned a non-JSON response: {}",
+                compact_provider_message(&body)
+            ))
+        })?;
+        if let Some(message) = completed.pointer("/error/message").and_then(Value::as_str) {
+            return Err(AppError::AiProvider(format!(
+                "AI provider error: {message}"
+            )));
+        }
+        let content = content_from_chat_completion(&completed).ok_or_else(|| {
+            AppError::AiProvider(format!(
+                "AI provider response has no usable chat-completion content: {}",
+                compact_provider_message(&body)
+            ))
+        })?;
+        parse_model_json(&content)
+    }))
+}
+
+#[tauri::command]
 pub async fn test_sqlite_connection(config: DatabaseConfig) -> CommandResponse<ConnectionStatus> {
     CommandResponse::from_result(SqliteAdapter.test_connection(&config).await)
 }
@@ -202,14 +386,18 @@ pub fn create_project_command(
     directory: String,
     name: String,
     sqlite_path: String,
+    superadmin_email: String,
+    superadmin_password: String,
     state: State<'_, WorkspaceRepository>,
 ) -> CommandResponse<ProjectSession> {
-    CommandResponse::from_result(create_project(
+    CommandResponse::from_result(tauri::async_runtime::block_on(create_project(
         &state,
         Path::new(&directory),
         &name,
         Path::new(&sqlite_path),
-    ))
+        &superadmin_email,
+        &superadmin_password,
+    )))
 }
 
 #[tauri::command]

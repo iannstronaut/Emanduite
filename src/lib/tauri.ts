@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { BlueprintV1, DatabaseConfig } from "../contracts/blueprint";
-import type { AppInfo, CommandResponse, ValidationDiagnostic } from "../contracts/commands";
+import type { AppInfo, CommandResponse, SecretPresence, SecretReference, ValidationDiagnostic } from "../contracts/commands";
 import type {
   ConnectionStatus,
   CreateProjectInput,
@@ -29,6 +29,25 @@ export const saveProject = (path: string, blueprint: BlueprintV1) =>
   command<ProjectSession>("save_project_command", { path, blueprint });
 export const validateBlueprint = (blueprint: BlueprintV1) =>
   command<ValidationDiagnostic[]>("validate_blueprint_command", { value: blueprint });
+export const putSecret = (projectId: string, key: string, value: string) =>
+  command<SecretReference>("put_secret", { projectId, key, value });
+export const hasSecret = (secretRef: string) =>
+  command<SecretPresence>("has_secret", { secretRef });
+export const deleteSecret = (secretRef: string) =>
+  command<void>("delete_secret", { secretRef });
+export const listOpenAiCompatibleModels = (baseUrl: string, secretRef: string) =>
+  command<string[]>("list_openai_compatible_models", { request: { baseUrl, secretRef } });
+export interface OpenAiCompatibleDesignInput {
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  maxOutputTokens: number;
+  secretRef: string;
+  prompt: string;
+  schemaContext: unknown;
+}
+export const generateOpenAiCompatibleDesign = (input: OpenAiCompatibleDesignInput) =>
+  command<unknown>("generate_openai_compatible_design", { request: input });
 export const duplicateProject = (input: DuplicateProjectInput) =>
   command<ProjectSession>("duplicate_project_command", { ...input });
 export const removeRecentProject = (path: string) =>

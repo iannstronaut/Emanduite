@@ -13,7 +13,7 @@ use crate::{
 };
 
 pub const TEMPLATE_ID: &str = "next-admin-v1";
-pub const TEMPLATE_VERSION: &str = "1.1.0";
+pub const TEMPLATE_VERSION: &str = "1.4.0";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -166,10 +166,11 @@ fn generation_input(
     if !target.is_dir() || target == project_root || project_root.starts_with(&target) {
         return Err(AppError::InvalidPath);
     }
-    let blueprint = load_blueprint(&project_file)?;
+    let mut blueprint = load_blueprint(&project_file)?;
     if !validate_blueprint(&blueprint).is_empty() {
         return Err(AppError::Validation);
     }
+    blueprint.bootstrap_default_admin_configuration();
     fs::create_dir_all(target.join(".emanduite"))?;
     Ok((blueprint, project_root, target))
 }
@@ -295,6 +296,13 @@ mod tests {
         assert!(preview
             .files
             .contains(&"src/app/(dashboard)/users/page.tsx".into()));
+        assert!(preview.files.contains(&"components.json".into()));
+        assert!(preview
+            .files
+            .contains(&"src/components/ui/button.tsx".into()));
+        assert!(preview
+            .files
+            .contains(&"src/components/app-sidebar.tsx".into()));
         let first = generate_project(&project, &target).unwrap();
         assert!(first.conflicts.is_empty());
         let first_manifest = fs::read(target.join(".emanduite/manifest.json")).unwrap();
@@ -308,6 +316,22 @@ mod tests {
         let schema = fs::read_to_string(target.join("prisma/schema.prisma")).unwrap();
         assert!(schema.contains("model Users"));
         assert!(schema.contains("id Int @id @default(autoincrement())"));
+        assert!(fs::read_to_string(target.join("components.json"))
+            .unwrap()
+            .contains("\"style\": \"new-york\""));
+        assert!(
+            fs::read_to_string(target.join("src/features/users/table.tsx"))
+                .unwrap()
+                .contains("@/components/ui/table")
+        );
+        assert!(
+            fs::read_to_string(target.join("src/features/users/table.tsx"))
+                .unwrap()
+                .contains("colSpan={3}")
+        );
+        let sidebar = fs::read_to_string(target.join("src/components/app-sidebar.tsx")).unwrap();
+        assert!(sidebar.contains("usePathname"));
+        assert!(sidebar.contains("pathname.startsWith"));
     }
 
     #[test]
@@ -380,16 +404,34 @@ mod tests {
         });
         save_blueprint(&project, &blueprint).unwrap();
         generate_project(&project, &target).unwrap();
-        assert!(target.join("src/auth.ts").is_file());
+        let auth_source = fs::read_to_string(target.join("src/auth.ts")).unwrap();
+        assert!(auth_source.contains("NEXTAUTH_SECRET"));
+        assert!(!auth_source.contains("sysAuthSubject.findUnique"));
+        assert!(target.join(".env.local").is_file());
         assert!(target.join("proxy.ts").is_file());
+        assert!(fs::read_to_string(target.join("proxy.ts"))
+            .unwrap()
+            .contains("secret: authSecret"));
+        assert!(
+            fs::read_to_string(target.join("src/app/(dashboard)/layout.tsx"))
+                .unwrap()
+                .contains("if (!session?.user) redirect(\"/login\")")
+        );
+        assert!(
+            !fs::read_to_string(target.join("src/app/(dashboard)/layout.tsx"))
+                .unwrap()
+                .contains("{{session.user")
+        );
         assert!(
             fs::read_to_string(target.join("src/features/users/actions.ts"))
                 .unwrap()
                 .contains("requirePermission")
         );
-        assert!(fs::read_to_string(target.join("prisma/schema.prisma"))
-            .unwrap()
-            .contains("model SysAuditLog"));
+        let schema = fs::read_to_string(target.join("prisma/schema.prisma")).unwrap();
+        assert!(schema.contains("model SysAuditLog"));
+        assert_eq!(schema.matches("@@map(\"sys_resources\")").count(), 1);
+        assert_eq!(schema.matches("@@map(\"sys_permissions\")").count(), 1);
+        assert_eq!(schema.matches("@@map(\"sys_audit_logs\")").count(), 1);
     }
 
     #[test]

@@ -34,6 +34,8 @@ pub enum AppError {
     InvalidPath,
     #[error("internal operation failed")]
     Internal,
+    #[error("AI provider error: {0}")]
+    AiProvider(String),
 }
 
 impl AppError {
@@ -49,6 +51,7 @@ impl AppError {
             Self::CapabilityDenied => "CAPABILITY_DENIED",
             Self::InvalidPath => "INVALID_PATH",
             Self::Internal => "INTERNAL_ERROR",
+            Self::AiProvider(_) => "AI_PROVIDER_ERROR",
         }
     }
 

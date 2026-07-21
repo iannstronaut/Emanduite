@@ -8,11 +8,17 @@ use std::{
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sqlx::{sqlite::SqliteConnectOptions, Connection};
 use uuid::Uuid;
 
 use crate::{
-    blueprint::{load_blueprint, save_blueprint, Blueprint},
-    database::sqlite::validate_existing_sqlite_path,
+    blueprint::{
+        load_blueprint, save_blueprint, Blueprint, CanonicalType, Column, ForeignKey, Table,
+    },
+    database::{
+        sqlite::{validate_existing_sqlite_path, SqliteAdapter},
+        DatabaseAdapter, SchemaOperation,
+    },
     error::AppError,
 };
 
@@ -148,13 +154,19 @@ impl WorkspaceRepository {
     }
 }
 
-pub fn create_project(
+pub async fn create_project(
     repository: &WorkspaceRepository,
     directory: &Path,
     name: &str,
     sqlite_path: &Path,
+    superadmin_email: &str,
+    superadmin_password: &str,
 ) -> Result<ProjectSession, AppError> {
     if name.trim().is_empty() {
+        return Err(AppError::Validation);
+    }
+    let superadmin_email = validate_superadmin_email(superadmin_email)?;
+    if superadmin_password.len() < 12 {
         return Err(AppError::Validation);
     }
     let directory = prepare_project_directory(directory)?;
@@ -163,7 +175,33 @@ pub fn create_project(
     if path.exists() {
         return Err(AppError::Validation);
     }
-    let blueprint = Blueprint::new_sqlite(name.trim(), sqlite.to_string_lossy());
+    let mut blueprint = Blueprint::new_sqlite(name.trim(), sqlite.to_string_lossy());
+    let adapter = SqliteAdapter;
+    let current = adapter.introspect(&blueprint.databases.main).await?;
+    let is_new_database = current.tables.is_empty();
+    if is_new_database {
+        let tables = default_system_tables();
+        let operations = tables
+            .into_iter()
+            .map(|table| SchemaOperation::AddTable {
+                operation_id: Uuid::new_v4().to_string(),
+                table,
+            })
+            .collect::<Vec<_>>();
+        let plan = adapter
+            .plan_schema_changes(&blueprint.databases.main, &operations)
+            .await?;
+        adapter
+            .apply_schema_changes(&blueprint.databases.main, &plan, None)
+            .await?;
+        let password_hash = bcrypt::hash(superadmin_password, bcrypt::DEFAULT_COST)
+            .map_err(|_| AppError::Internal)?;
+        seed_superadmin(&blueprint.databases.main, &superadmin_email, &password_hash).await?;
+    }
+    blueprint.databases.main.tables = adapter.introspect(&blueprint.databases.main).await?.tables;
+    if is_new_database {
+        blueprint.bootstrap_default_admin_configuration();
+    }
     save_blueprint(&path, &blueprint)?;
     let session = ProjectSession {
         path: path.to_string_lossy().into_owned(),
@@ -171,6 +209,171 @@ pub fn create_project(
     };
     repository.remember(&session)?;
     Ok(session)
+}
+
+fn validate_superadmin_email(value: &str) -> Result<String, AppError> {
+    let value = value.trim();
+    if value.len() > 254 || !value.contains('@') || value.starts_with('@') || value.ends_with('@') {
+        return Err(AppError::Validation);
+    }
+    Ok(value.to_owned())
+}
+
+async fn seed_superadmin(
+    config: &crate::blueprint::DatabaseConfig,
+    email: &str,
+    password_hash: &str,
+) -> Result<(), AppError> {
+    let crate::blueprint::ConnectionConfig::Sqlite { path } = &config.connection else {
+        return Err(AppError::Validation);
+    };
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false)
+        .foreign_keys(true);
+    let mut connection = sqlx::SqliteConnection::connect_with(&options).await?;
+    let mut transaction = connection.begin().await?;
+    sqlx::query("CREATE UNIQUE INDEX IF NOT EXISTS mst_users_email_unique ON mst_users (email)")
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query("INSERT INTO mst_roles (name) VALUES (?)")
+        .bind("Superadmin")
+        .execute(&mut *transaction)
+        .await?;
+    let role_id: i64 = sqlx::query_scalar("SELECT id FROM mst_roles WHERE name = ?")
+        .bind("Superadmin")
+        .fetch_one(&mut *transaction)
+        .await?;
+    sqlx::query("INSERT INTO mst_users (name, email, password, role_id) VALUES (?, ?, ?, ?)")
+        .bind("Superadmin")
+        .bind(email)
+        .bind(password_hash)
+        .bind(role_id)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    connection.close().await?;
+    Ok(())
+}
+
+fn default_system_tables() -> Vec<Table> {
+    let column = |name: &str,
+                  native_type: &str,
+                  canonical_type,
+                  nullable: bool,
+                  primary_key: bool,
+                  default_value: Option<&str>| Column {
+        id: Uuid::new_v4().to_string(),
+        name: name.into(),
+        native_type: native_type.into(),
+        canonical_type,
+        nullable,
+        primary_key,
+        default_value: default_value.map(str::to_owned),
+    };
+    let table = |name: &str, columns: Vec<Column>, foreign_keys: Vec<ForeignKey>| Table {
+        id: Uuid::new_v4().to_string(),
+        name: name.into(),
+        columns,
+        foreign_keys,
+        indexes: Vec::new(),
+    };
+    let foreign_key = |from_column: &str, to_table: &str| ForeignKey {
+        id: Uuid::new_v4().to_string(),
+        from_column: from_column.into(),
+        to_table: to_table.into(),
+        to_column: "id".into(),
+        on_update: Some("CASCADE".into()),
+        on_delete: Some("SET NULL".into()),
+    };
+
+    vec![
+        table(
+            "mst_roles",
+            vec![
+                column("id", "INTEGER", CanonicalType::Integer, false, true, None),
+                column("name", "TEXT", CanonicalType::Text, false, false, None),
+            ],
+            vec![],
+        ),
+        table(
+            "mst_users",
+            vec![
+                column("id", "INTEGER", CanonicalType::Integer, false, true, None),
+                column("name", "TEXT", CanonicalType::Text, false, false, None),
+                column("email", "TEXT", CanonicalType::Text, false, false, None),
+                column("password", "TEXT", CanonicalType::Text, false, false, None),
+                column(
+                    "role_id",
+                    "INTEGER",
+                    CanonicalType::Integer,
+                    true,
+                    false,
+                    None,
+                ),
+                column(
+                    "created_at",
+                    "DATETIME",
+                    CanonicalType::DateTime,
+                    false,
+                    false,
+                    Some("CURRENT_TIMESTAMP"),
+                ),
+            ],
+            vec![foreign_key("role_id", "mst_roles")],
+        ),
+        table(
+            "sys_resources",
+            vec![
+                column("id", "TEXT", CanonicalType::Text, false, true, None),
+                column("key", "TEXT", CanonicalType::Text, false, false, None),
+            ],
+            vec![],
+        ),
+        table(
+            "sys_permissions",
+            vec![
+                column("id", "TEXT", CanonicalType::Text, false, true, None),
+                column("role_key", "TEXT", CanonicalType::Text, false, false, None),
+                column(
+                    "resource_key",
+                    "TEXT",
+                    CanonicalType::Text,
+                    false,
+                    false,
+                    None,
+                ),
+                column("action", "TEXT", CanonicalType::Text, false, false, None),
+            ],
+            vec![],
+        ),
+        table(
+            "sys_audit_logs",
+            vec![
+                column("id", "TEXT", CanonicalType::Text, false, true, None),
+                column("subject_id", "TEXT", CanonicalType::Text, true, false, None),
+                column(
+                    "resource_key",
+                    "TEXT",
+                    CanonicalType::Text,
+                    false,
+                    false,
+                    None,
+                ),
+                column("action", "TEXT", CanonicalType::Text, false, false, None),
+                column("outcome", "TEXT", CanonicalType::Text, false, false, None),
+                column(
+                    "created_at",
+                    "DATETIME",
+                    CanonicalType::DateTime,
+                    false,
+                    false,
+                    Some("CURRENT_TIMESTAMP"),
+                ),
+            ],
+            vec![],
+        ),
+    ]
 }
 
 pub fn open_project(
@@ -323,7 +526,60 @@ mod tests {
         let repository = WorkspaceRepository::open(directory.path().join("state.json")).unwrap();
         let sqlite = sqlite_fixture(directory.path()).await;
         let project_directory = directory.path().join("project");
-        let created = create_project(&repository, &project_directory, "Demo", &sqlite).unwrap();
+        let created = create_project(
+            &repository,
+            &project_directory,
+            "Demo",
+            &sqlite,
+            "admin@example.test",
+            "A-strong-password-123",
+        )
+        .await
+        .unwrap();
+        assert!(crate::blueprint::validate_blueprint(&created.blueprint).is_empty());
+        let tables = created
+            .blueprint
+            .databases
+            .main
+            .tables
+            .iter()
+            .map(|table| table.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            tables,
+            [
+                "mst_roles",
+                "mst_users",
+                "sys_audit_logs",
+                "sys_permissions",
+                "sys_resources",
+            ]
+            .into_iter()
+            .collect()
+        );
+        let options = SqliteConnectOptions::new()
+            .filename(&sqlite)
+            .create_if_missing(false);
+        let mut connection = sqlx::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        let (name, email, password_hash, role): (String, String, String, String) = sqlx::query_as(
+            "SELECT u.name, u.email, u.password, r.name FROM mst_users u JOIN mst_roles r ON r.id = u.role_id",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        assert_eq!(
+            (name, email, role),
+            (
+                "Superadmin".into(),
+                "admin@example.test".into(),
+                "Superadmin".into()
+            )
+        );
+        assert_ne!(password_hash, "A-strong-password-123");
+        assert!(bcrypt::verify("A-strong-password-123", &password_hash).unwrap());
+        connection.close().await.unwrap();
         let reopened = open_project(&repository, Path::new(&created.path)).unwrap();
         assert_eq!(created.blueprint, reopened.blueprint);
         assert_eq!(repository.recent_projects().unwrap().len(), 1);
@@ -337,8 +593,16 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let repository = WorkspaceRepository::open(directory.path().join("state.json")).unwrap();
         let sqlite = sqlite_fixture(directory.path()).await;
-        let created =
-            create_project(&repository, &directory.path().join("one"), "One", &sqlite).unwrap();
+        let created = create_project(
+            &repository,
+            &directory.path().join("one"),
+            "One",
+            &sqlite,
+            "admin@example.test",
+            "A-strong-password-123",
+        )
+        .await
+        .unwrap();
         let duplicate = duplicate_project(
             &repository,
             Path::new(&created.path),
@@ -406,7 +670,10 @@ mod tests {
             &directory.path().join("project"),
             "Phase 2 Slice",
             &sqlite,
+            "admin@example.test",
+            "A-strong-password-123",
         )
+        .await
         .unwrap();
         SqliteAdapter
             .test_connection(&session.blueprint.databases.main)

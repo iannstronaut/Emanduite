@@ -11,6 +11,8 @@ import { AuthEditor, EntityEditor, GlobalEditor, PermissionEditor } from "./Conf
 import { ExtensionEditor } from "./ExtensionEditor";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { GeneratorPanel } from "./GeneratorPanel";
+import { AiDesigner } from "./AiDesigner";
+import { AiSettings } from "./AiSettings";
 import activeLogo from "../../assets/emanduite.svg";
 import inactiveLogo from "../../assets/emanduite_inactive.svg";
 
@@ -47,11 +49,13 @@ function Workspace() {
       <button className={workspace.view === "database" ? "nav-item active" : "nav-item"} aria-label="Database" disabled={!workspace.session} onClick={() => workspace.setView("database")}><Data size={18} variant={workspace.view === "database" ? "Bold" : "Linear"} /><span>Database</span></button>
       <button className={workspace.view === "schema" ? "nav-item active" : "nav-item"} aria-label="Schema" disabled={!workspace.session} onClick={() => workspace.setView("schema")}><Diagram size={18} variant={workspace.view === "schema" ? "Bold" : "Linear"} /><span>Schema</span></button>
       <button className={workspace.view === "editor" ? "nav-item active" : "nav-item"} aria-label="Schema editor" disabled={!workspace.session} onClick={() => workspace.setView("editor")}><Edit size={18} variant={workspace.view === "editor" ? "Bold" : "Linear"} /><span>Editor</span></button>
+      <button className={workspace.view === "ai" ? "nav-item active" : "nav-item"} aria-label="AI database designer" disabled={!workspace.session} onClick={() => workspace.setView("ai")}><Magicpen size={18} variant={workspace.view === "ai" ? "Bold" : "Linear"} /><span>AI Design</span></button>
       <button className={workspace.view === "entities" ? "nav-item active" : "nav-item"} aria-label="Entities" disabled={!workspace.session} onClick={() => workspace.setView("entities")}><Profile2User size={18} variant={workspace.view === "entities" ? "Bold" : "Linear"} /><span>Entities</span></button>
       <button className={workspace.view === "permissions" ? "nav-item active" : "nav-item"} aria-label="Permissions" disabled={!workspace.session} onClick={() => workspace.setView("permissions")}><SecuritySafe size={18} variant={workspace.view === "permissions" ? "Bold" : "Linear"} /><span>Access</span></button>
       <button className={workspace.view === "auth" ? "nav-item active" : "nav-item"} aria-label="Authentication" disabled={!workspace.session} onClick={() => workspace.setView("auth")}><LoginCurve size={18} variant={workspace.view === "auth" ? "Bold" : "Linear"} /><span>Auth</span></button>
       <button className={workspace.view === "extensions" ? "nav-item active" : "nav-item"} aria-label="Extensions" disabled={!workspace.session} onClick={() => workspace.setView("extensions")}><Code size={18} variant={workspace.view === "extensions" ? "Bold" : "Linear"} /><span>Extend</span></button>
       <button className={workspace.view === "global" ? "nav-item active" : "nav-item"} aria-label="Global config" disabled={!workspace.session} onClick={() => workspace.setView("global")}><Global size={18} variant={workspace.view === "global" ? "Bold" : "Linear"} /><span>Global</span></button>
+      <button className={workspace.view === "settings" ? "nav-item active" : "nav-item"} aria-label="AI provider settings" disabled={!workspace.session} onClick={() => workspace.setView("settings")}><Global size={18} variant={workspace.view === "settings" ? "Bold" : "Linear"} /><span>Settings</span></button>
       <button className={workspace.view === "workflow" ? "nav-item active" : "nav-item"} aria-label="Workflows and diagnostics" disabled={!workspace.session} onClick={() => workspace.setView("workflow")}><Monitor size={18} variant={workspace.view === "workflow" ? "Bold" : "Linear"} /><span>Operate</span></button>
       <button className={workspace.view === "generator" ? "nav-item active" : "nav-item"} aria-label="Next.js generator" disabled={!workspace.session} onClick={() => workspace.setView("generator")}><Magicpen size={18} variant={workspace.view === "generator" ? "Bold" : "Linear"} /><span>Generate</span></button>
     </aside>
@@ -61,11 +65,13 @@ function Workspace() {
       {workspace.view === "database" && workspace.session && <ConnectionManager session={workspace.session} connection={workspace.connection} diagnostics={workspace.diagnostics} onPath={workspace.setSqlitePath} onTest={() => { void workspace.testConnection(); }} onIntrospect={() => { void workspace.introspect(); }} />}
       {workspace.view === "schema" && workspace.session && <SchemaExplorer session={workspace.session} layout={workspace.layout} onLayout={workspace.setLayout} />}
       {workspace.view === "editor" && workspace.session && <SchemaEditor session={workspace.session} onPlan={workspace.planSchema} onApply={workspace.applySchema} />}
+      {workspace.view === "ai" && workspace.session && <AiDesigner key={`${workspace.session.path}-ai`} session={workspace.session} onPlan={workspace.planSchema} onApply={workspace.applySchema} onOpenSchema={() => workspace.setView("schema")} />}
       {workspace.view === "entities" && workspace.session && <EntityEditor key={`${workspace.session.path}-entities`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
       {workspace.view === "permissions" && workspace.session && <PermissionEditor key={`${workspace.session.path}-permissions`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
       {workspace.view === "auth" && workspace.session && <AuthEditor key={`${workspace.session.path}-auth`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
       {workspace.view === "extensions" && workspace.session && <ExtensionEditor key={`${workspace.session.path}-extensions`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
       {workspace.view === "global" && workspace.session && <GlobalEditor key={`${workspace.session.path}-global`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
+      {workspace.view === "settings" && workspace.session && <AiSettings key={`${workspace.session.path}-settings`} session={workspace.session} onCommit={workspace.commitBlueprint} />}
       {workspace.view === "workflow" && workspace.session && <WorkflowPanel key={`${workspace.session.path}-workflow`} session={workspace.session} onRecover={workspace.recover} />}
       {workspace.view === "generator" && workspace.session && <GeneratorPanel key={`${workspace.session.path}-generator`} session={workspace.session} onGenerated={workspace.refreshProject} />}
     </section>

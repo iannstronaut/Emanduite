@@ -44,6 +44,8 @@ pub fn run() {
             commands::put_secret,
             commands::has_secret,
             commands::delete_secret,
+            commands::list_openai_compatible_models,
+            commands::generate_openai_compatible_design,
             commands::test_sqlite_connection,
             commands::introspect_sqlite,
             commands::plan_sqlite_schema_changes,

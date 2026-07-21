@@ -29,8 +29,17 @@ function unwrap<T>(response: CommandResponse<T>): T {
 }
 
 function commandMessage(error: unknown): string {
+  if (typeof error === "string" && error.trim()) return error;
+  if (error instanceof Error && error.message) return error.message;
   const value = error as Partial<CommandError>;
-  return value?.message ?? (error instanceof Error ? error.message : "Operation failed");
+  if (typeof value?.message === "string" && value.message) return value.message;
+  if (value && typeof value === "object") {
+    try {
+      const detail = JSON.stringify(value);
+      if (detail && detail !== "{}") return detail;
+    } catch { /* Keep the safe fallback below. */ }
+  }
+  return "Operation failed without a diagnostic from the desktop runtime.";
 }
 
 export function useWorkspace() {
