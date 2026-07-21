@@ -423,6 +423,19 @@ mod tests {
                 .contains("{{session.user")
         );
         assert!(
+            fs::read_to_string(target.join("src/app/(dashboard)/layout.tsx"))
+                .unwrap()
+                .contains("UserMenu")
+        );
+        assert!(
+            fs::read_to_string(target.join("src/components/user-menu.tsx"))
+                .unwrap()
+                .contains("My profile")
+        );
+        assert!(target
+            .join("src/app/(dashboard)/profile/page.tsx")
+            .is_file());
+        assert!(
             fs::read_to_string(target.join("src/features/users/actions.ts"))
                 .unwrap()
                 .contains("requirePermission")

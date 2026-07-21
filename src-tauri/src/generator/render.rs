@@ -169,7 +169,7 @@ fn static_files(
 }}
 "#
     );
-    Ok(vec![
+    let mut files = vec![
         generated("package.json", package),
         user_optional("package-lock.json"),
         generated("next.config.ts", "import type { NextConfig } from \"next\";\n\nconst config: NextConfig = { reactStrictMode: true, turbopack: { root: process.cwd() } };\nexport default config;\n"),
@@ -200,7 +200,17 @@ fn static_files(
         generated("src/app/layout.tsx", LAYOUT.replace("{{PROJECT_NAME}}", &escape_tsx(&blueprint.project_name))),
         generated("src/app/(dashboard)/layout.tsx", (if blueprint.auth.is_some() { DASHBOARD_LAYOUT_AUTH } else { DASHBOARD_LAYOUT }).replace("{{PROJECT_NAME}}", &escape_tsx(&blueprint.project_name))),
         generated("src/app/(dashboard)/page.tsx", DASHBOARD_PAGE.replace("{{ENTITY_CARDS}}", &entity_cards)),
-    ])
+    ];
+
+    if blueprint.auth.is_some() {
+        files.push(generated("src/components/user-menu.tsx", USER_MENU));
+        files.push(generated(
+            "src/app/(dashboard)/profile/page.tsx",
+            PROFILE_PAGE,
+        ));
+    }
+
+    Ok(files)
 }
 
 fn app_sidebar(project_name: &str, entities: &[EntitySpec]) -> String {
@@ -275,7 +285,7 @@ fn security_files(
         .collect::<Vec<_>>()
         .join(", ");
     let mut files = vec![
-        generated("src/lib/access-policy.ts", format!("export const rolePermissions = {{ {roles} }} as const;\nexport type PermissionAction = \"read\" | \"create\" | \"update\" | \"delete\";\nexport function hasPermission(roleKey: string | undefined, resource: string, action: PermissionAction) {{ return Boolean(roleKey && rolePermissions[roleKey as keyof typeof rolePermissions]?.[resource as never]?.includes(action as never)); }}\n")),
+        generated("src/lib/access-policy.ts", format!("export const rolePermissions = {{ {roles} }} as const;\nexport type PermissionAction = \"read\" | \"create\" | \"update\" | \"delete\";\nexport function hasPermission(roleKey: string | undefined, resource: string, action: PermissionAction) {{ if (roleKey === \"superadmin\") return true; return Boolean(roleKey && rolePermissions[roleKey as keyof typeof rolePermissions]?.[resource as never]?.includes(action as never)); }}\n")),
         generated("src/lib/hooks.ts", HOOK_RUNTIME),
     ];
     if let Some(auth) = &blueprint.auth {
@@ -320,6 +330,12 @@ fn auth_files(
     let identifier = field(&auth.identifier_field_id)?;
     let password = field(&auth.password_field_id)?;
     let external = field(&auth.external_id_field_id)?;
+    let display_name = user
+        .fields
+        .iter()
+        .find(|field| field.key == "name")
+        .map(|field| field.prisma.clone())
+        .unwrap_or_else(|| identifier.clone());
     let registration = matches!(
         auth.registration_policy,
         crate::blueprint::RegistrationPolicy::Open
@@ -346,7 +362,7 @@ export const authOptions: NextAuthOptions = {{
   if (!candidate || !(await compare(password, String(candidate.{password} ?? "")))) return null;
   const roleKey = Number(candidate.roleId ?? 0) === 1 ? "superadmin" : "";
   if (!roleKey) return null;
-  return {{ id: String(candidate.{external}), name: String(candidate.{identifier}), roleKey }} as never;
+  return {{ id: String(candidate.{external}), name: String(candidate.{display_name} ?? candidate.{identifier}), roleKey }} as never;
     }}
   }})],
   callbacks: {{
@@ -360,6 +376,7 @@ export default NextAuth(authOptions);
         identifier = identifier,
         password = password,
         external = external,
+        display_name = display_name,
         auth_secret = auth_secret
     );
     let access = r#"import { getServerSession } from "next-auth";
@@ -1616,11 +1633,75 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/auth";
 import { AppSidebar } from "@/components/app-sidebar";
+import { UserMenu } from "@/components/user-menu";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
-  return <div className="min-h-screen bg-muted/30"><AppSidebar /><div className="md:pl-60"><header className="sticky top-0 z-20 hidden h-16 items-center justify-between border-b bg-background/80 px-8 backdrop-blur md:flex"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Workspace</p><p className="text-sm font-semibold">{{PROJECT_NAME}}</p></div><div className="rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground">{session.user.name ?? "Administrator"}</div></header><header className="flex h-14 items-center border-b bg-background/80 px-5 backdrop-blur md:hidden"><Link className="flex items-center gap-2 text-sm font-semibold" href="/"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Boxes className="size-4" /></span>{{PROJECT_NAME}}</Link></header><main className="px-5 py-6 sm:px-8 sm:py-8">{children}</main></div></div>;
+  const roleKey = (session.user as { roleKey?: string }).roleKey ?? "user";
+  return <div className="min-h-screen bg-muted/30"><AppSidebar /><div className="md:pl-60"><header className="sticky top-0 z-20 hidden h-16 items-center justify-between border-b bg-background/80 px-8 backdrop-blur md:flex"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Workspace</p><p className="text-sm font-semibold">{{PROJECT_NAME}}</p></div><UserMenu name={session.user.name ?? "Administrator"} role={roleKey} /></header><header className="flex h-14 items-center border-b bg-background/80 px-5 backdrop-blur md:hidden"><Link className="flex items-center gap-2 text-sm font-semibold" href="/"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Boxes className="size-4" /></span>{{PROJECT_NAME}}</Link></header><main className="px-5 py-6 sm:px-8 sm:py-8">{children}</main></div></div>;
+}"#;
+
+const USER_MENU: &str = r#""use client";
+
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, LogOut, UserRound } from "lucide-react";
+import { signOut } from "next-auth/react";
+
+interface UserMenuProps { name: string; role: string; }
+
+function roleLabel(role: string) {
+  if (role === "superadmin") return "Superadmin";
+  return role.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "U";
+}
+
+export function UserMenu({ name, role }: UserMenuProps) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, []);
+
+  return <div className="relative" ref={menuRef}>
+    <button type="button" onClick={() => setOpen((value) => !value)} className="flex items-center gap-2 rounded-lg border bg-background px-2 py-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-haspopup="menu" aria-expanded={open}>
+      <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">{initials(name)}</span>
+      <span className="hidden min-w-0 sm:block"><span className="block max-w-40 truncate text-sm font-medium">{name}</span><span className="block max-w-40 truncate text-xs text-muted-foreground">{roleLabel(role)}</span></span>
+      <ChevronDown className="size-4 text-muted-foreground" />
+    </button>
+    {open ? <div role="menu" className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-lg border bg-background p-1 shadow-lg">
+      <div className="border-b px-3 py-2"><p className="truncate text-sm font-medium">{name}</p><p className="truncate text-xs text-muted-foreground">{roleLabel(role)}</p></div>
+      <Link role="menuitem" href="/profile" onClick={() => setOpen(false)} className="mt-1 flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-muted"><UserRound className="size-4" />My profile</Link>
+      <button type="button" role="menuitem" onClick={() => signOut({ callbackUrl: "/login" })} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10"><LogOut className="size-4" />Logout</button>
+    </div> : null}
+  </div>;
+}"#;
+
+const PROFILE_PAGE: &str = r#"import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
+import { ShieldCheck, UserRound } from "lucide-react";
+import { authOptions } from "@/auth";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+function roleLabel(role: string) {
+  if (role === "superadmin") return "Superadmin";
+  return role.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export default async function ProfilePage() {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) redirect("/login");
+  const role = (session.user as { roleKey?: string }).roleKey ?? "user";
+  return <section className="mx-auto max-w-2xl space-y-7"><div><p className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Account</p><h1 className="mt-1 text-2xl font-semibold tracking-tight">My profile</h1><p className="mt-1 text-sm text-muted-foreground">Your current account and access role in this workspace.</p></div><Card><CardHeader><CardTitle className="flex items-center gap-2 text-base"><UserRound className="size-4" />Account details</CardTitle><CardDescription>Profile details are provided by your administrator account.</CardDescription></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><div className="rounded-lg border bg-muted/30 p-4"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Name</p><p className="mt-1 truncate text-sm font-medium">{session.user.name ?? "Administrator"}</p></div><div className="rounded-lg border bg-muted/30 p-4"><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Email</p><p className="mt-1 truncate text-sm font-medium">{session.user.email ?? "Not available"}</p></div><div className="rounded-lg border bg-muted/30 p-4 sm:col-span-2"><p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-muted-foreground"><ShieldCheck className="size-3.5" />Role</p><p className="mt-1 text-sm font-medium">{roleLabel(role)}</p></div></CardContent></Card></section>;
 }"#;
 
 const DASHBOARD_PAGE: &str = r#"import Link from "next/link";

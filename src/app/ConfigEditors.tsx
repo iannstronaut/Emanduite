@@ -4,6 +4,27 @@ import type { ProjectSession } from "../contracts/workspace";
 
 const uuid = () => crypto.randomUUID();
 type Commit = (update: (blueprint: BlueprintV1) => BlueprintV1) => void;
+const CRUD_ACTIONS = ["read", "create", "update", "delete"];
+
+function synchronizeEntityMenuResources(blueprint: BlueprintV1) {
+  const resources = structuredClone(blueprint.resources);
+  const roles = structuredClone(blueprint.roles);
+  const menus = structuredClone(blueprint.menus);
+  for (const [key, entity] of Object.entries(blueprint.entities)) {
+    const resource = resources[key] ?? { id: uuid(), key, resourceType: "entity", actions: [...CRUD_ACTIONS] };
+    resources[key] = resource;
+    for (const [roleKey, role] of Object.entries(roles)) {
+      if (role.key !== "superadmin") continue;
+      const granted = new Set(role.permissions[resource.id] ?? []);
+      CRUD_ACTIONS.forEach((action) => granted.add(action));
+      roles[roleKey] = { ...role, permissions: { ...role.permissions, [resource.id]: [...granted] } };
+    }
+    if (!menus.some((menu) => menu.resourceId === resource.id)) {
+      menus.push({ id: uuid(), label: entity.label || key, resourceId: resource.id, order: menus.length });
+    }
+  }
+  return { resources, roles, menus };
+}
 
 export function EntityEditor({ session, onCommit }: { session: ProjectSession; onCommit: Commit }) {
   const original = session.blueprint.entities;
@@ -21,37 +42,55 @@ export function EntityEditor({ session, onCommit }: { session: ProjectSession; o
     setDraft((value) => ({ ...value, [key]: entity })); setSelected(key); setSelectedField(Object.keys(entity.fields)[0] ?? "");
   };
   const changeField = (key: string, patch: Partial<EntityConfig["fields"][string]>) => setDraft((value) => ({ ...value, [selected]: { ...value[selected], fields: { ...value[selected].fields, [key]: { ...value[selected].fields[key], ...patch } } } }));
-  return <ConfigShell eyebrow="ENTITY / FORM CONFIG" title="Entity presentation" description="Bind canonical columns to list, detail, and form behavior." dirty={dirty} onSave={() => onCommit((blueprint) => ({ ...blueprint, entities: draft }))} onDiscard={() => { setDraft(structuredClone(original)); setSelected(Object.keys(original)[0] ?? ""); }}>
+  return <ConfigShell eyebrow="ENTITY / FORM CONFIG" title="Entity presentation" description="Bind canonical columns to list, detail, and form behavior." dirty={dirty} onSave={() => onCommit((blueprint) => { const next = { ...blueprint, entities: draft }; return { ...next, ...synchronizeEntityMenuResources(next) }; })} onDiscard={() => { setDraft(structuredClone(original)); setSelected(Object.keys(original)[0] ?? ""); }}>
     <div className="config-split"><aside className="config-list"><select value="" onChange={(event) => addEntity(event.target.value)}><option value="">+ Add entity from table</option>{tables.filter((item) => !Object.values(draft).some((entity) => entity.tableId === item.id)).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select>{Object.entries(draft).map(([key, entity]) => <button className={key === selected ? "active" : ""} onClick={() => { setSelected(key); setSelectedField(Object.keys(entity.fields)[0] ?? ""); }} key={entity.id}><b>{entity.label ?? key}</b><span>{key}</span></button>)}</aside><section className="config-detail">{current && table ? <><label>Entity label<input value={current.label ?? ""} onChange={(event) => setDraft((value) => ({ ...value, [selected]: { ...current, label: event.target.value } }))} /></label><div className="field-config-header"><span>Field</span><span>Control</span><span>List</span><span>View</span><span>Form</span><span>Required</span></div>{Object.entries(current.fields).map(([key, field]) => { const column = table.columns.find((item) => item.id === field.columnId); return <div className={key === selectedField ? "field-config-row selected" : "field-config-row"} key={field.id}><button className="field-name" onClick={() => setSelectedField(key)}><b>{key}</b><small>{column?.canonicalType}</small></button><select value={field.control} onChange={(event) => changeField(key, { control: event.target.value })}>{["text", "textarea", "number", "switch", "date", "select", "radio", "hidden"].map((value) => <option key={value}>{value}</option>)}</select>{(["showInList", "showInView", "showInForm", "required"] as const).map((property) => <input key={property} type="checkbox" checked={field[property]} onChange={(event) => changeField(key, { [property]: event.target.checked })} />)}</div>})}{selectedField && current.fields[selectedField] && <FieldAdvanced field={current.fields[selectedField]} entities={draft} onChange={(patch) => changeField(selectedField, patch)} />}<button className="secondary danger" onClick={() => { const next = { ...draft }; delete next[selected]; setDraft(next); setSelected(Object.keys(next)[0] ?? ""); setSelectedField(""); }}>Remove entity config</button></> : <EmptyConfig text="Add an entity from an introspected table." />}</section></div>
   </ConfigShell>;
 }
 
 export function PermissionEditor({ session, onCommit }: { session: ProjectSession; onCommit: Commit }) {
-  const [resources, setResources] = useState<Record<string, ResourceConfig>>(() => structuredClone(session.blueprint.resources));
-  const [roles, setRoles] = useState<Record<string, RoleConfig>>(() => structuredClone(session.blueprint.roles));
-  const [menus, setMenus] = useState<MenuItem[]>(() => structuredClone(session.blueprint.menus));
+  const [initialAccess] = useState(() => synchronizeEntityMenuResources(session.blueprint));
+  const [resources, setResources] = useState<Record<string, ResourceConfig>>(() => initialAccess.resources);
+  const [roles, setRoles] = useState<Record<string, RoleConfig>>(() => initialAccess.roles);
+  const [menus, setMenus] = useState<MenuItem[]>(() => initialAccess.menus);
   const [entityKey, setEntityKey] = useState("");
   const [roleKey, setRoleKey] = useState("");
   const [resourceKey, setResourceKey] = useState("");
   const [actionKey, setActionKey] = useState("");
   const [actionResourceId, setActionResourceId] = useState("");
   const [selectedRoleKey, setSelectedRoleKey] = useState(() => Object.keys(session.blueprint.roles)[0] ?? "");
-  const [selectedResourceId, setSelectedResourceId] = useState(() => Object.values(session.blueprint.resources)[0]?.id ?? "");
-  const original = JSON.stringify([session.blueprint.resources, session.blueprint.roles, session.blueprint.menus]);
-  const dirty = JSON.stringify([resources, roles, menus]) !== original;
+  const [selectedResourceId, setSelectedResourceId] = useState(() => Object.values(initialAccess.resources)[0]?.id ?? "");
+  const currentSnapshot = JSON.stringify([resources, roles, menus]);
+  const [appliedSnapshot, setAppliedSnapshot] = useState(() => JSON.stringify([initialAccess.resources, initialAccess.roles, initialAccess.menus]));
+  const dirty = currentSnapshot !== appliedSnapshot;
   const entities = Object.entries(session.blueprint.entities).map(([key, entity]) => ({ key, label: entity.label || key }));
   const resourceList = Object.values(resources);
   const roleList = Object.entries(roles);
   const activeRole = roles[selectedRoleKey];
   const activeResource = resourceList.find((resource) => resource.id === selectedResourceId);
+  const menuResourceIds = new Set(menus.map((menu) => menu.resourceId).filter((id): id is string => Boolean(id)));
+  const menuEntities = entities.filter((entity) => !menuResourceIds.has(resources[entity.key]?.id ?? ""));
   const safeKey = (value: string) => /^[A-Za-z][A-Za-z0-9_-]*$/.test(value);
   const addResource = (key: string) => {
     if (!safeKey(key) || resources[key]) return;
     const id = uuid();
-    setResources((value) => ({ ...value, [key]: { id, key, resourceType: "entity", actions: ["read", "create", "update", "delete"] } }));
+    const actions = ["read", "create", "update", "delete"];
+    setResources((value) => ({ ...value, [key]: { id, key, resourceType: "entity", actions } }));
+    setRoles((value) => Object.fromEntries(Object.entries(value).map(([roleKeyValue, role]) => [roleKeyValue, role.key === "superadmin" ? { ...role, permissions: { ...role.permissions, [id]: actions } } : role])));
     setActionResourceId(id); setSelectedResourceId(id);
   };
-  const addEntityResource = () => { const key = entityKey || entities.find((entity) => !resources[entity.key])?.key; if (!key) return; addResource(key); setEntityKey(""); };
+  const addEntityMenu = () => {
+    const key = entityKey || menuEntities[0]?.key;
+    const entity = entities.find((item) => item.key === key);
+    if (!key || !entity) return;
+    const resourceId = resources[key]?.id ?? uuid();
+    const actions = ["read", "create", "update", "delete"];
+    if (!resources[key]) {
+      setResources((value) => ({ ...value, [key]: { id: resourceId, key, resourceType: "entity", actions } }));
+      setRoles((value) => Object.fromEntries(Object.entries(value).map(([roleKeyValue, role]) => [roleKeyValue, role.key === "superadmin" ? { ...role, permissions: { ...role.permissions, [resourceId]: actions } } : role])));
+    }
+    setMenus((value) => value.some((menu) => menu.resourceId === resourceId) ? value : [...value, { id: uuid(), label: entity.label, resourceId, order: value.length }]);
+    setActionResourceId(resourceId); setSelectedResourceId(resourceId); setEntityKey("");
+  };
   const addManualResource = () => { addResource(resourceKey.trim()); setResourceKey(""); };
   const addRole = () => { const key = roleKey.trim(); if (!safeKey(key) || roles[key]) return; setRoles((value) => ({ ...value, [key]: { id: uuid(), key, label: key, permissions: {} } })); setSelectedRoleKey(key); setRoleKey(""); };
   const toggle = (role: string, resource: ResourceConfig, action: string) => setRoles((value) => { const current = value[role].permissions[resource.id] ?? []; const actions = current.includes(action) ? current.filter((item) => item !== action) : [...current, action]; return { ...value, [role]: { ...value[role], permissions: { ...value[role].permissions, [resource.id]: actions } } }; });
@@ -60,8 +99,10 @@ export function PermissionEditor({ session, onCommit }: { session: ProjectSessio
   const removeAction = (resourceId: string, action: string) => { setResources((value) => Object.fromEntries(Object.entries(value).map(([key, resource]) => [key, resource.id === resourceId ? { ...resource, actions: resource.actions.filter((item) => item !== action) } : resource]))); setRoles((value) => Object.fromEntries(Object.entries(value).map(([key, role]) => [key, { ...role, permissions: { ...role.permissions, [resourceId]: (role.permissions[resourceId] ?? []).filter((item) => item !== action) } }]))); };
   const removeResource = (key: string, resourceId: string) => { setResources((value) => { const next = { ...value }; delete next[key]; return next; }); setRoles((value) => Object.fromEntries(Object.entries(value).map(([roleKeyValue, role]) => { const permissions = { ...role.permissions }; delete permissions[resourceId]; return [roleKeyValue, { ...role, permissions }]; }))); setMenus((value) => value.map((menu) => menu.resourceId === resourceId ? { ...menu, resourceId: undefined } : menu)); if (selectedResourceId === resourceId) setSelectedResourceId(""); if (actionResourceId === resourceId) setActionResourceId(""); };
   const updateMenu = (index: number, patch: Partial<MenuItem>) => setMenus((value) => value.map((item, at) => at === index ? { ...item, ...patch } : item));
-  return <ConfigShell eyebrow="ACCESS CONTROL" title="Set access by role" description="Add a resource from an existing Entity, choose a role, then grant only the actions it needs." dirty={dirty} onSave={() => onCommit((blueprint) => ({ ...blueprint, resources, roles, menus }))} onDiscard={() => { setResources(structuredClone(session.blueprint.resources)); setRoles(structuredClone(session.blueprint.roles)); setMenus(structuredClone(session.blueprint.menus)); }}>
-    <div className="permission-guided"><section><span className="step-number">1</span><div><b>Protect an entity</b><small>Turn an existing Entity Config into a permission resource.</small></div><select aria-label="Entity resource" value={entityKey} onChange={(event) => setEntityKey(event.target.value)}><option value="">Choose an entity</option>{entities.filter((entity) => !resources[entity.key]).map((entity) => <option key={entity.key} value={entity.key}>{entity.label} ({entity.key})</option>)}</select><button disabled={!entities.some((entity) => !resources[entity.key])} onClick={addEntityResource}>Add selected entity</button></section><section><span className="step-number">2</span><div><b>Choose a role</b><small>Roles are reused across all resources.</small></div><select aria-label="Role to configure" value={selectedRoleKey} onChange={(event) => setSelectedRoleKey(event.target.value)}><option value="">Choose a role</option>{roleList.map(([key, role]) => <option value={key} key={role.id}>{role.label} ({key})</option>)}</select></section><section><span className="step-number">3</span><div><b>Grant access</b><small>Choose a resource to reveal its actions.</small></div><select aria-label="Grant resource" value={selectedResourceId} onChange={(event) => setSelectedResourceId(event.target.value)} disabled={!activeRole}><option value="">Choose a resource</option>{resourceList.map((resource) => <option value={resource.id} key={resource.id}>{resource.key}</option>)}</select>{activeResource && <button className="secondary" onClick={toggleAll}>{activeResource.actions.every((action) => (activeRole?.permissions[activeResource.id] ?? []).includes(action)) ? "Clear all" : "Grant all"}</button>}</section></div>
+  const apply = () => { onCommit((blueprint) => ({ ...blueprint, resources, roles, menus })); setAppliedSnapshot(currentSnapshot); };
+  const discard = () => { const next = synchronizeEntityMenuResources(session.blueprint); setResources(next.resources); setRoles(next.roles); setMenus(next.menus); setAppliedSnapshot(JSON.stringify([next.resources, next.roles, next.menus])); };
+  return <ConfigShell eyebrow="ACCESS CONTROL" title="Set access by role" description="Every Entity menu is automatically available as a resource. Choose a role, then configure its actions." dirty={dirty} onSave={apply} onDiscard={discard}>
+    <div className="permission-guided access-only"><section><span className="step-number">1</span><div><b>Choose a role</b><small>Roles are reused across every Entity menu resource.</small></div><select aria-label="Role to configure" value={selectedRoleKey} onChange={(event) => setSelectedRoleKey(event.target.value)}><option value="">Choose a role</option>{roleList.map(([key, role]) => <option value={key} key={role.id}>{role.label} ({key})</option>)}</select></section><section><span className="step-number">2</span><div><b>Choose a menu resource</b><small>All Entity menus are listed here automatically.</small></div><select aria-label="Grant resource" value={selectedResourceId} onChange={(event) => setSelectedResourceId(event.target.value)} disabled={!activeRole}><option value="">Choose a resource</option>{resourceList.map((resource) => <option value={resource.id} key={resource.id}>{resource.key}</option>)}</select>{activeResource && <button className="secondary" onClick={toggleAll}>{activeResource.actions.every((action) => (activeRole?.permissions[activeResource.id] ?? []).includes(action)) ? "Clear all" : "Grant all"}</button>}</section></div>
     <section className="permission-focus"><div className="panel-title"><span>{activeRole ? `Permissions for ${activeRole.label}` : "Choose a role first"}</span><small>{activeResource?.key ?? "no resource selected"}</small></div>{activeRole && activeResource ? <div className="permission-action-list">{activeResource.actions.map((action) => <label key={action} className={(activeRole.permissions[activeResource.id] ?? []).includes(action) ? "selected" : ""}><input type="checkbox" aria-label={`${activeRole.key} ${activeResource.key} ${action}`} checked={(activeRole.permissions[activeResource.id] ?? []).includes(action)} onChange={() => toggle(selectedRoleKey, activeResource, action)} /><span>{action}</span><small>{action === "read" ? "View records" : action === "create" ? "Add records" : action === "update" ? "Edit records" : action === "delete" ? "Delete records" : "Custom action"}</small></label>)}</div> : <div className="empty-state compact"><strong>Choose role and resource</strong><span>The available actions will appear here, instead of in a large matrix.</span></div>}</section>
     <details className="permission-advanced"><summary>Advanced options: custom resource, role, or action</summary><div className="permission-builders"><div className="inline-form"><input value={resourceKey} onChange={(event) => setResourceKey(event.target.value)} placeholder="resource key" /><button onClick={addManualResource}>Add resource</button></div><div className="inline-form"><input value={roleKey} onChange={(event) => setRoleKey(event.target.value)} placeholder="role key" /><button onClick={addRole}>Add role</button></div><div className="inline-form"><select aria-label="Action resource" value={actionResourceId} onChange={(event) => setActionResourceId(event.target.value)}><option value="">Resource</option>{resourceList.map((resource) => <option value={resource.id} key={resource.id}>{resource.key}</option>)}</select><input value={actionKey} onChange={(event) => setActionKey(event.target.value)} placeholder="custom action" /><button onClick={addAction}>Add action</button></div></div></details>
     <div className="permission-inventory"><section><div className="panel-title"><span>Resources</span><small>{resourceList.length}</small></div>{Object.entries(resources).map(([key, resource]) => <div className="inventory-row" key={resource.id}><b>{resource.key}</b><span>{resource.actions.map((action) => <button aria-label={`Remove ${resource.key} ${action} action`} onClick={() => removeAction(resource.id, action)} key={action}>{action} ×</button>)}</span><button className="danger" aria-label={`Remove resource ${resource.key}`} onClick={() => removeResource(key, resource.id)}>Remove</button></div>)}</section><section><div className="panel-title"><span>Roles</span><small>{roleList.length}</small></div>{roleList.map(([key, role]) => <div className="inventory-row" key={role.id}><input aria-label={`${role.key} role label`} value={role.label} onChange={(event) => setRoles((value) => ({ ...value, [key]: { ...role, label: event.target.value } }))} /><button className="danger" aria-label={`Remove role ${role.key}`} onClick={() => setRoles((value) => { const next = { ...value }; delete next[key]; return next; })}>Remove</button></div>)}</section></div>
