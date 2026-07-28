@@ -231,6 +231,7 @@ mod tests {
             MenuItem {
                 id: parent_id.clone(),
                 label: "Admin".into(),
+                icon: Some("ShieldCheck".into()),
                 resource_id: None,
                 parent_id: None,
                 order: 0,
@@ -238,6 +239,7 @@ mod tests {
             MenuItem {
                 id: Uuid::new_v4().to_string(),
                 label: "Users".into(),
+                icon: None,
                 resource_id: Some(resource_id.clone()),
                 parent_id: Some(parent_id),
                 order: 1,

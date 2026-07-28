@@ -88,6 +88,7 @@ export interface RelationDisplay {
 export interface EntityFieldConfig {
   id: string;
   columnId: string;
+  label?: string;
   control: string;
   showInList: boolean;
   showInView: boolean;
@@ -101,6 +102,7 @@ export interface EntityFieldConfig {
 export interface EntityConfig {
   id: string;
   label?: string;
+  menuIcon?: string;
   databaseId: string;
   tableId: string;
   fields: Record<string, EntityFieldConfig>;
@@ -123,6 +125,7 @@ export interface RoleConfig {
 export interface MenuItem {
   id: string;
   label: string;
+  icon?: string;
   resourceId?: string;
   parentId?: string;
   order: number;

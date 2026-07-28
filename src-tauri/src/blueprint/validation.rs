@@ -512,6 +512,7 @@ mod tests {
             MenuItem {
                 id: first.clone(),
                 label: "First".into(),
+                icon: None,
                 resource_id: None,
                 parent_id: Some(second.clone()),
                 order: 0,
@@ -519,6 +520,7 @@ mod tests {
             MenuItem {
                 id: second,
                 label: "Second".into(),
+                icon: None,
                 resource_id: None,
                 parent_id: Some(first),
                 order: 1,

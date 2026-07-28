@@ -146,7 +146,7 @@ pub fn get_app_info() -> CommandResponse<AppInfo> {
     CommandResponse::from_result(Ok(AppInfo {
         name: "Emanduite",
         version: env!("CARGO_PKG_VERSION"),
-        phase: "Phase 7 - Provider Matrix & Release",
+        phase: "v0.5.0",
         blueprint_schema_version: CURRENT_SCHEMA_VERSION,
         database_providers: ["sqlite"],
     }))
@@ -226,13 +226,33 @@ pub fn delete_secret(secret_ref: String, state: State<'_, SecretState>) -> Comma
 }
 
 #[tauri::command]
-pub fn list_openai_compatible_models(
+pub fn finish_app_startup(app: tauri::AppHandle) -> CommandResponse<()> {
+    let result = (|| {
+        let main = app.get_webview_window("main").ok_or(AppError::NotFound)?;
+        main.show().map_err(|_| AppError::Internal)?;
+        main.set_focus().map_err(|_| AppError::Internal)?;
+
+        if let Some(splashscreen) = app.get_webview_window("splashscreen") {
+            splashscreen.close().map_err(|_| AppError::Internal)?;
+        }
+
+        Ok(())
+    })();
+
+    CommandResponse::from_result(result)
+}
+
+#[tauri::command]
+pub async fn list_openai_compatible_models(
     request: OpenAiCompatibleModelRequest,
-    state: State<'_, SecretState>,
+    app: tauri::AppHandle,
 ) -> CommandResponse<Vec<String>> {
-    CommandResponse::from_result(tauri::async_runtime::block_on(async {
+    let api_key = match app.state::<SecretState>().0.get(&request.secret_ref) {
+        Ok(api_key) => api_key,
+        Err(error) => return CommandResponse::from_result(Err(error)),
+    };
+    let result = async {
         let endpoint = openai_compatible_endpoint(&request.base_url, "models")?;
-        let api_key = state.0.get(&request.secret_ref)?;
         let response = reqwest::Client::new()
             .get(endpoint)
             .bearer_auth(api_key)
@@ -254,20 +274,26 @@ pub fn list_openai_compatible_models(
         models.sort();
         models.dedup();
         Ok(models)
-    }))
+    }
+    .await;
+
+    CommandResponse::from_result(result)
 }
 
 #[tauri::command]
-pub fn generate_openai_compatible_design(
+pub async fn generate_openai_compatible_design(
     request: OpenAiCompatibleDesignRequest,
-    state: State<'_, SecretState>,
+    app: tauri::AppHandle,
 ) -> CommandResponse<Value> {
-    CommandResponse::from_result(tauri::async_runtime::block_on(async {
+    let api_key = match app.state::<SecretState>().0.get(&request.secret_ref) {
+        Ok(api_key) => api_key,
+        Err(error) => return CommandResponse::from_result(Err(error)),
+    };
+    let result = async {
         if request.prompt.trim().is_empty() || request.model.trim().is_empty() {
             return Err(AppError::Validation);
         }
         let endpoint = openai_compatible_endpoint(&request.base_url, "chat/completions")?;
-        let api_key = state.0.get(&request.secret_ref)?;
         let response = reqwest::Client::new()
             .post(endpoint)
             .bearer_auth(api_key)
@@ -321,7 +347,10 @@ pub fn generate_openai_compatible_design(
             ))
         })?;
         parse_model_json(&content)
-    }))
+    }
+    .await;
+
+    CommandResponse::from_result(result)
 }
 
 #[tauri::command]

@@ -110,6 +110,7 @@ impl Blueprint {
                 EntityFieldConfig {
                     id: Uuid::new_v4().to_string(),
                     column_id: column_id.into(),
+                    label: None,
                     control: control.into(),
                     show_in_list,
                     show_in_view,
@@ -142,6 +143,7 @@ impl Blueprint {
             EntityConfig {
                 id: entity_id.clone(),
                 label: Some("Users".into()),
+                menu_icon: Some("Users".into()),
                 database_id: database_id.clone(),
                 table_id: table.id.clone(),
                 fields,
@@ -343,6 +345,8 @@ pub struct EntityConfig {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub menu_icon: Option<String>,
     pub database_id: String,
     pub table_id: String,
     #[serde(default)]
@@ -354,6 +358,8 @@ pub struct EntityConfig {
 pub struct EntityFieldConfig {
     pub id: String,
     pub column_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub control: String,
     pub show_in_list: bool,
     pub show_in_view: bool,
@@ -429,6 +435,8 @@ pub struct RoleConfig {
 pub struct MenuItem {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

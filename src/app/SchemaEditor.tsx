@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { CanonicalType, Column, Table } from "../contracts/blueprint";
 import type { ApplyResult, MigrationPlan, SchemaOperation } from "../contracts/schema-editor";
 import type { ProjectSession } from "../contracts/workspace";
+import { useModal } from "./ModalProvider";
 
 interface Props {
   session: ProjectSession;
@@ -24,6 +25,7 @@ const nativeToCanonical = (value: string): CanonicalType => {
 };
 
 export function SchemaEditor({ session, onPlan, onApply }: Props) {
+  const { confirm } = useModal();
   const tables = session.blueprint.databases.main.tables;
   const [operations, setOperations] = useState<SchemaOperation[]>([]);
   const [redo, setRedo] = useState<SchemaOperation[]>([]);
@@ -63,9 +65,13 @@ export function SchemaEditor({ session, onPlan, onApply }: Props) {
     setApplying(false);
     if (result) { setOperations([]); setRedo([]); setPlan(null); setConfirmation(""); }
   };
+  const discard = async () => {
+    if (!operations.length || !await confirm({ title: "Discard schema draft?", description: `This removes ${operations.length} pending schema operation${operations.length === 1 ? "" : "s"}. No SQLite changes have been applied.`, tone: "danger", confirmLabel: "Discard draft" })) return;
+    setOperations([]); setRedo([]); setPlan(null);
+  };
 
   return <div className="page editor-page">
-    <div className="page-heading"><div><span className="eyebrow">VISUAL SCHEMA EDITOR</span><h1>Operation workspace</h1><p>Draft changes first. SQLite is modified only after server-generated preview and confirmation.</p></div><div className="editor-actions"><button className="secondary" disabled={!operations.length} onClick={() => { const last = operations.at(-1); if (last) { setOperations((items) => items.slice(0, -1)); setRedo((items) => [last, ...items]); setPlan(null); } }}>Undo</button><button className="secondary" disabled={!redo.length} onClick={() => { const next = redo[0]; setRedo((items) => items.slice(1)); setOperations((items) => [...items, next]); }}>Redo</button><button className="secondary danger" disabled={!operations.length} onClick={() => { setOperations([]); setRedo([]); setPlan(null); }}>Discard</button><button className="primary" disabled={!operations.length} onClick={() => { void preview(); }}>Preview migration</button></div></div>
+    <div className="page-heading"><div><span className="eyebrow">VISUAL SCHEMA EDITOR</span><h1>Operation workspace</h1><p>Draft changes first. SQLite is modified only after server-generated preview and confirmation.</p></div><div className="editor-actions"><button className="secondary" disabled={!operations.length} onClick={() => { const last = operations.at(-1); if (last) { setOperations((items) => items.slice(0, -1)); setRedo((items) => [last, ...items]); setPlan(null); } }}>Undo</button><button className="secondary" disabled={!redo.length} onClick={() => { const next = redo[0]; setRedo((items) => items.slice(1)); setOperations((items) => [...items, next]); }}>Redo</button><button className="secondary danger" disabled={!operations.length} onClick={() => { void discard(); }}>Discard</button><button className="primary" disabled={!operations.length} onClick={() => { void preview(); }}>Preview migration</button></div></div>
     <div className="editor-grid">
       <section className="panel editor-tools"><div className="panel-title"><span>Schema operations</span><small>main SQLite</small></div>
         <div className="tool-block"><h3>Add table</h3><div className="inline-form"><input value={tableName} onChange={(event) => setTableName(event.target.value)} placeholder="table_name" /><button onClick={addTable}>Add</button></div></div>

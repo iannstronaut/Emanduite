@@ -18,7 +18,7 @@ import type { MigrationPlan, SchemaOperation } from "../contracts/schema-editor"
 const fallbackInfo: AppInfo = {
   name: "Emanduite",
   version: "web-preview",
-  phase: "Phase 5 - Next.js Generator",
+  phase: "v0.5.0",
   blueprintSchemaVersion: 1,
   databaseProviders: ["sqlite"]
 };

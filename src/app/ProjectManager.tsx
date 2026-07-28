@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { ProjectSession, RecentProject } from "../contracts/workspace";
 import { selectBlueprintFile, selectProjectDirectory, selectSqliteFile } from "../lib/tauri";
+import { useModal } from "./ModalProvider";
 
 interface Props {
   session: ProjectSession | null;
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export function ProjectManager({ session, recent, onCreate, onOpen, onDuplicate, onRemove }: Props) {
+  const { confirm } = useModal();
   const [name, setName] = useState("");
   const [directory, setDirectory] = useState("");
   const [sqlitePath, setSqlitePath] = useState("");
@@ -25,6 +27,9 @@ export function ProjectManager({ session, recent, onCreate, onOpen, onDuplicate,
     if (!session) return;
     const targetDirectory = await selectProjectDirectory();
     if (targetDirectory) onDuplicate({ sourcePath: session.path, targetDirectory, name: `${session.blueprint.projectName} Copy` });
+  };
+  const removeRecent = async (path: string, projectName: string) => {
+    if (await confirm({ title: "Remove recent project?", description: `“${projectName}” will be removed from the recent-project list. Its files and SQLite database will stay untouched.`, tone: "danger", confirmLabel: "Remove reference" })) onRemove(path);
   };
 
   return <div className="page project-page">
@@ -43,7 +48,7 @@ export function ProjectManager({ session, recent, onCreate, onOpen, onDuplicate,
         <div className="panel-title"><span>Recent projects</span><small>{recent.length}/12</small></div>
         {recent.length === 0 ? <div className="empty-state"><strong>No recent projects</strong><span>Create a project or open an existing `emanduite-project.json`.</span></div> : <div className="recent-list">{recent.map((item) => <article className={session?.path === item.path ? "recent-item active" : "recent-item"} key={item.path}>
           <button className="recent-main" onClick={() => onOpen(item.path)}><strong>{item.name}</strong><span>{item.path}</span><time>{new Date(item.lastOpenedAt).toLocaleString()}</time></button>
-          <button className="icon-button" title="Remove recent reference" onClick={() => onRemove(item.path)}>×</button>
+          <button className="icon-button" title="Remove recent reference" onClick={() => { void removeRecent(item.path, item.name); }}>×</button>
         </article>)}</div>}
         <div className="panel-actions"><button className="secondary" disabled={!session} onClick={duplicate}>Duplicate active project</button></div>
       </section>

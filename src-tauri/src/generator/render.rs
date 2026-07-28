@@ -20,6 +20,7 @@ struct EntitySpec {
     key: String,
     slug: String,
     label: String,
+    menu_icon: String,
     model: String,
     delegate: String,
     table: String,
@@ -30,6 +31,7 @@ struct EntitySpec {
 #[derive(Clone)]
 struct FieldSpec {
     key: String,
+    label: String,
     prisma: String,
     column: String,
     kind: CanonicalType,
@@ -41,6 +43,30 @@ struct FieldSpec {
     required: bool,
     control: String,
     validations: Vec<(String, Option<String>, Option<String>)>,
+}
+
+const DEFAULT_BRAND_LOGO: &str = include_str!("../../../assets/emanduite.svg");
+
+fn branding_settings(blueprint: &Blueprint) -> (String, String) {
+    let branding = blueprint
+        .global
+        .settings
+        .get("branding")
+        .and_then(|value| value.as_object());
+    let app_name = branding
+        .and_then(|value| value.get("appName"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&blueprint.project_name)
+        .to_owned();
+    let logo_src = branding
+        .and_then(|value| value.get("logoDataUrl"))
+        .and_then(|value| value.as_str())
+        .filter(|value| value.starts_with("data:image/svg+xml"))
+        .unwrap_or("/app-logo.svg")
+        .to_owned();
+    (app_name, logo_src)
 }
 
 pub(super) fn render_project(
@@ -94,6 +120,7 @@ fn static_files(
     entities: &[EntitySpec],
 ) -> Result<Vec<GeneratedFile>, AppError> {
     let project_name = package_name(&blueprint.project_name);
+    let (app_name, logo_src) = branding_settings(blueprint);
     let database_url = match (
         &blueprint.databases.main.provider,
         &blueprint.databases.main.connection,
@@ -191,14 +218,16 @@ fn static_files(
         generated("src/components/ui/label.tsx", SHADCN_LABEL),
         generated("src/components/ui/table.tsx", SHADCN_TABLE),
         generated("src/components/ui/textarea.tsx", SHADCN_TEXTAREA),
-        generated("src/components/app-sidebar.tsx", app_sidebar(&blueprint.project_name, entities)),
+        generated("public/app-logo.svg", DEFAULT_BRAND_LOGO),
+        generated("src/lib/branding.ts", format!("export const APP_NAME = {};\nexport const APP_LOGO = {};\n", js_string(&app_name), js_string(&logo_src))),
+        generated("src/components/app-sidebar.tsx", app_sidebar(blueprint, &app_name, entities)),
         generated("src/lib/query-contract.ts", QUERY_CONTRACT),
         generated("src/lib/query-contract.test.ts", QUERY_CONTRACT_TEST),
         generated("src/extensions/types.ts", EXTENSION_TYPES),
         generated("src/extensions/registry.ts", extension_registry(blueprint)),
         generated("src/app/globals.css", GLOBAL_CSS),
-        generated("src/app/layout.tsx", LAYOUT.replace("{{PROJECT_NAME}}", &escape_tsx(&blueprint.project_name))),
-        generated("src/app/(dashboard)/layout.tsx", (if blueprint.auth.is_some() { DASHBOARD_LAYOUT_AUTH } else { DASHBOARD_LAYOUT }).replace("{{PROJECT_NAME}}", &escape_tsx(&blueprint.project_name))),
+        generated("src/app/layout.tsx", LAYOUT.replace("{{PROJECT_NAME}}", &escape_tsx(&app_name))),
+        generated("src/app/(dashboard)/layout.tsx", (if blueprint.auth.is_some() { DASHBOARD_LAYOUT_AUTH } else { DASHBOARD_LAYOUT }).replace("{{PROJECT_NAME}}", &escape_tsx(&app_name))),
         generated("src/app/(dashboard)/page.tsx", DASHBOARD_PAGE.replace("{{ENTITY_CARDS}}", &entity_cards)),
     ];
 
@@ -213,23 +242,73 @@ fn static_files(
     Ok(files)
 }
 
-fn app_sidebar(project_name: &str, entities: &[EntitySpec]) -> String {
-    let items = entities
+fn app_sidebar(blueprint: &Blueprint, app_name: &str, entities: &[EntitySpec]) -> String {
+    let resources = blueprint
+        .resources
+        .values()
+        .map(|resource| (resource.id.as_str(), resource.key.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut configured = blueprint.menus.iter().collect::<Vec<_>>();
+    configured.sort_by(|left, right| left.order.cmp(&right.order).then(left.id.cmp(&right.id)));
+    let configured_ids = configured
         .iter()
-        .map(|entity| {
-            format!(
-                "  {{ href: {}, label: {} }},",
+        .map(|menu| menu.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let configured_keys = configured
+        .iter()
+        .filter_map(|menu| resources.get(menu.resource_id.as_deref()?).copied())
+        .collect::<BTreeSet<_>>();
+    let mut item_lines = configured
+        .iter()
+        .filter_map(|menu| {
+            let parent = menu
+                .parent_id
+                .as_deref()
+                .filter(|parent_id| configured_ids.contains(parent_id))
+                .map(js_string)
+                .unwrap_or_else(|| "undefined".into());
+            if menu.resource_id.is_none() {
+                return Some(format!(
+                    "  {{ kind: \"group\", id: {}, href: \"#\", label: {}, icon: {}, parentId: {} }},",
+                    js_string(&menu.id),
+                    js_string(&menu.label),
+                    generated_menu_icon(menu.icon.as_deref()),
+                    parent
+                ));
+            }
+            let resource_key = resources.get(menu.resource_id.as_deref()?)?;
+            let entity = entities.iter().find(|entity| entity.key == *resource_key)?;
+            Some(format!(
+                "  {{ kind: \"entity\", id: {}, href: {}, label: {}, icon: {}, parentId: {} }},",
+                js_string(&menu.id),
                 js_string(&format!("/{}", entity.slug)),
-                js_string(&entity.label)
-            )
+                js_string(&menu.label),
+                entity.menu_icon,
+                parent
+            ))
         })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!(
+        .collect::<Vec<_>>();
+    item_lines.extend(
+        entities
+            .iter()
+            .filter(|entity| !configured_keys.contains(entity.key.as_str()))
+            .map(|entity| {
+                format!(
+                    "  {{ kind: \"entity\", id: {}, href: {}, label: {}, icon: {}, parentId: undefined }},",
+                    js_string(&entity.key),
+                    js_string(&format!("/{}", entity.slug)),
+                    js_string(&entity.label),
+                    entity.menu_icon
+                )
+            }),
+    );
+    let items = item_lines.join("\n");
+    let sidebar = format!(
         r#""use client";
 import Link from "next/link";
+import {{ useEffect, useState }} from "react";
 import {{ usePathname }} from "next/navigation";
-import {{ Boxes, Database, LayoutDashboard }} from "lucide-react";
+import {{ Archive, BarChart3, Bell, BookOpen, Boxes, Briefcase, CalendarDays, ChevronDown, ClipboardList, Code2, CreditCard, Database, FilePenLine, FileText, Folder, GitBranch, Globe2, House, LayoutDashboard, ListTodo, LogIn, MessageSquare, Monitor, Package, Receipt, Settings, ShieldCheck, ShoppingBag, Store, Sun, Truck, UserRound, Users, WalletCards, WandSparkles }} from "lucide-react";
 import {{ cn }} from "@/lib/utils";
 
 const navigation = [
@@ -241,12 +320,26 @@ function isActive(pathname: string, href: string) {{ return href === "/" ? pathn
 export function AppSidebar() {{
   const pathname = usePathname();
   const itemClass = (active: boolean) => cn("flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors", active ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90" : "text-muted-foreground hover:bg-muted hover:text-foreground");
-  return <aside className="hidden border-r bg-background md:fixed md:inset-y-0 md:flex md:w-60 md:flex-col"><div className="flex h-16 items-center gap-2 border-b px-5"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Boxes className="size-4" /></span><Link className="truncate text-sm font-semibold" href="/">{project_name}</Link></div><nav className="grid gap-1 p-3"><Link className={{itemClass(isActive(pathname, "/"))}} href="/"><LayoutDashboard className="size-4" />Overview</Link>{{navigation.map((item) => <Link className={{itemClass(isActive(pathname, item.href))}} href={{item.href}} key={{item.href}}><Database className="size-4" />{{item.label}}</Link>)}}</nav><div className="mt-auto border-t px-5 py-4 text-xs text-muted-foreground">Generated by Emanduite</div></aside>;
+  const subItemClass = (active: boolean) => cn("flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors", active ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90" : "text-muted-foreground hover:bg-muted hover:text-foreground");
+  const topNavigation = navigation.filter((item) => !item.parentId);
+  const childrenOf = (id: string) => navigation.filter((item) => item.parentId === id);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => Object.fromEntries(topNavigation.filter((item) => item.kind === "group").map((item) => [item.id, true])));
+  useEffect(() => {{ const activeGroup = topNavigation.find((item) => item.kind === "group" && childrenOf(item.id).some((child) => isActive(pathname, child.href))); if (activeGroup) setOpenGroups((value) => value[activeGroup.id] ? value : {{ ...value, [activeGroup.id]: true }}); }}, [pathname]);
+  return <aside className="hidden border-r bg-background md:fixed md:inset-y-0 md:flex md:w-60 md:flex-col"><div className="flex h-16 items-center gap-2 border-b px-5"><span className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground"><Boxes className="size-4" /></span><Link className="truncate text-sm font-semibold" href="/">{project_name}</Link></div><nav className="grid gap-1 p-3"><Link className={{itemClass(isActive(pathname, "/"))}} href="/"><LayoutDashboard className="size-4" />Overview</Link>{{topNavigation.map((item) => {{ const Icon = item.icon; const children = childrenOf(item.id); if (item.kind === "group") {{ const open = openGroups[item.id] ?? true; return <div className="grid gap-1" key={{item.id}}><button type="button" className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-muted" onClick={{() => setOpenGroups((value) => ({{ ...value, [item.id]: !open }}))}} aria-expanded={{open}}><Icon className="size-4" />{{item.label}}<ChevronDown className={{cn("ml-auto size-4 transition-transform", open && "rotate-180")}} /></button>{{open && (children.length ? <div className="ml-4 grid gap-1 border-l pl-2">{{children.map((child) => <Link className={{subItemClass(isActive(pathname, child.href))}} href={{child.href}} key={{child.id}}><span className="size-3" />{{child.label}}</Link>)}}</div> : <p className="px-3 text-xs text-muted-foreground">No menu items</p>)}}</div>; }} return <Link className={{itemClass(isActive(pathname, item.href))}} href={{item.href}} key={{item.id}}><Icon className="size-4" />{{item.label}}</Link>; }})}}</nav><div className="mt-auto border-t px-5 py-4 text-xs text-muted-foreground">Generated by Emanduite</div></aside>;
 }}
 "#,
         items = items,
-        project_name = escape_tsx(project_name)
-    )
+        project_name = escape_tsx(app_name)
+    );
+    sidebar
+        .replace(
+            "import { cn } from \"@/lib/utils\";",
+            "import { cn } from \"@/lib/utils\";\nimport { APP_LOGO } from \"@/lib/branding\";",
+        )
+        .replace(
+            "<span className=\"grid size-7 place-items-center rounded-md bg-primary text-primary-foreground\"><Boxes className=\"size-4\" /></span>",
+            "<span className=\"grid size-9 place-items-center rounded-md border bg-background p-1.5 shadow-sm\"><img src={APP_LOGO} alt=\"\" className=\"size-full object-contain\" /></span>",
+        )
 }
 
 fn security_files(
@@ -409,13 +502,24 @@ export const config = {{ matcher: ["/((?!api/auth|login|register|_next|favicon.i
     );
     let login = r#""use client";
 import { signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-export default function LoginPage() { const [error,setError] = useState(""); return <main className="grid min-h-screen place-items-center bg-muted/40 p-4"><Card className="w-full max-w-sm"><CardHeader><CardTitle>Sign in</CardTitle><CardDescription>Use the account provisioned for this workspace.</CardDescription></CardHeader><CardContent><form className="grid gap-5" action={async (form) => { const result = await signIn("credentials", { identifier: String(form.get("identifier") ?? ""), password: String(form.get("password") ?? ""), redirect: true, callbackUrl: "/" }); if (result?.error) setError("Invalid credentials"); }}><div className="grid gap-2"><Label htmlFor="identifier">Identifier</Label><Input id="identifier" name="identifier" required /></div><div className="grid gap-2"><Label htmlFor="password">Password</Label><Input id="password" name="password" type="password" required /></div>{error && <p className="text-sm text-destructive" role="alert">{error}</p>}<Button type="submit">Sign in</Button></form></CardContent></Card></main>; }
+export default function LoginPage() { const router = useRouter(); const [error,setError] = useState(""); const [notice,setNotice] = useState(""); const [submitting,setSubmitting] = useState(false); const submit = async (form: FormData) => { setSubmitting(true); setError(""); setNotice(""); try { const result = await signIn("credentials", { identifier: String(form.get("identifier") ?? ""), password: String(form.get("password") ?? ""), redirect: false, callbackUrl: "/" }); if (!result || result.error) { setError("Sign in failed. Check your identifier and password, then try again."); return; } setNotice("Signed in successfully. Opening your workspace…"); window.setTimeout(() => { router.replace(result.url ?? "/"); router.refresh(); }, 650); } catch { setError("We could not reach the sign-in service. Please try again."); } finally { setSubmitting(false); } }; return <main className="grid min-h-screen place-items-center bg-muted/40 p-4"><Card className="w-full max-w-sm"><CardHeader><CardTitle>Sign in</CardTitle><CardDescription>Use the account provisioned for this workspace.</CardDescription></CardHeader><CardContent><form className="grid gap-5" action={submit}><div className="grid gap-2"><Label htmlFor="identifier">Identifier</Label><Input id="identifier" name="identifier" disabled={submitting} required /></div><div className="grid gap-2"><Label htmlFor="password">Password</Label><Input id="password" name="password" type="password" disabled={submitting} required /></div>{error && <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert" aria-live="assertive">{error}</p>}{notice && <div className="fixed bottom-5 right-5 z-50 rounded-lg border border-emerald-500/30 bg-background px-4 py-3 text-sm font-medium text-emerald-700 shadow-lg dark:text-emerald-300" role="status" aria-live="polite">{notice}</div>}<Button disabled={submitting} type="submit">{submitting ? <><span className="size-3 animate-spin rounded-full border-2 border-current border-t-transparent" />Signing in…</> : "Sign in"}</Button></form></CardContent></Card></main>; }
 "#;
+    let login = login
+        .replace(
+            "import { useState } from \"react\";",
+            "import { useState } from \"react\";\nimport { APP_LOGO, APP_NAME } from \"@/lib/branding\";",
+        )
+        .replace(
+            "<main className=\"grid min-h-screen place-items-center bg-muted/40 p-4\"><Card",
+            "<main className=\"grid min-h-screen place-items-center bg-muted/40 p-4\"><div className=\"grid w-full max-w-sm gap-7\"><div className=\"grid justify-items-center gap-4 text-center\"><img src={APP_LOGO} alt={`${APP_NAME} logo`} className=\"size-20 rounded-2xl border bg-background p-3 shadow-sm\" /><h1 className=\"text-xl font-semibold tracking-tight\">{APP_NAME}</h1></div><Card",
+        )
+        .replace("</Card></main>; }", "</Card></div></main>; }");
     let mut files = vec![
         generated("src/auth.ts", auth_source),
         generated("src/lib/access.ts", access),
@@ -465,6 +569,7 @@ fn entity_specs(blueprint: &Blueprint) -> Result<Vec<EntitySpec>, AppError> {
             key: key.clone(),
             slug,
             label: entity.label.clone().unwrap_or_else(|| key.clone()),
+            menu_icon: generated_menu_icon(entity.menu_icon.as_deref()).into(),
             delegate: lower_first(&model),
             model,
             table: table.name.clone(),
@@ -473,6 +578,44 @@ fn entity_specs(blueprint: &Blueprint) -> Result<Vec<EntitySpec>, AppError> {
         });
     }
     Ok(values)
+}
+
+fn generated_menu_icon(value: Option<&str>) -> &'static str {
+    match value.unwrap_or("Database") {
+        "LayoutDashboard" => "LayoutDashboard",
+        "House" => "House",
+        "GitBranch" => "GitBranch",
+        "Archive" => "Archive",
+        "Package" => "Package",
+        "Briefcase" => "Briefcase",
+        "CalendarDays" => "CalendarDays",
+        "BarChart3" => "BarChart3",
+        "ListTodo" => "ListTodo",
+        "ClipboardList" => "ClipboardList",
+        "FileText" => "FileText",
+        "MessageSquare" => "MessageSquare",
+        "Bell" => "Bell",
+        "Folder" => "Folder",
+        "Users" => "Users",
+        "UserRound" => "UserRound",
+        "ShieldCheck" => "ShieldCheck",
+        "Globe2" => "Globe2",
+        "Code2" => "Code2",
+        "FilePenLine" => "FilePenLine",
+        "WandSparkles" => "WandSparkles",
+        "Monitor" => "Monitor",
+        "LogIn" => "LogIn",
+        "Sun" => "Sun",
+        "Truck" => "Truck",
+        "Store" => "Store",
+        "ShoppingBag" => "ShoppingBag",
+        "WalletCards" => "WalletCards",
+        "CreditCard" => "CreditCard",
+        "Receipt" => "Receipt",
+        "BookOpen" => "BookOpen",
+        "Settings" => "Settings",
+        _ => "Database",
+    }
 }
 
 fn field_specs(table: &Table, entity: &EntityConfig) -> Result<Vec<FieldSpec>, AppError> {
@@ -551,6 +694,12 @@ fn field_spec(
                 .as_deref()
                 .is_some_and(|value| value.to_ascii_lowercase().contains("auto")));
     FieldSpec {
+        label: config
+            .and_then(|field| field.label.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&key)
+            .to_string(),
         key,
         prisma,
         column: column.name.clone(),
@@ -1166,7 +1315,7 @@ fn entity_table(entity: &EntitySpec) -> String {
             format!(
                 "  {{ accessorKey: {}, header: {} }},",
                 js_string(&field.prisma),
-                js_string(&field.key)
+                js_string(&field.label)
             )
         })
         .collect::<Vec<_>>()

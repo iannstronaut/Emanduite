@@ -1,0 +1,12 @@
+:root { color: #edf7f2; background: #0d100f; font-family: Inter, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 460px; min-height: 300px; overflow: hidden; }
+.splash { width: 100vw; height: 100vh; display: grid; place-content: center; justify-items: center; gap: 19px; border: 1px solid #27332e; background: #111513; box-shadow: inset 0 1px 0 #ffffff0a; text-align: center; }
+.logo { width: 68px; height: 68px; display: grid; place-items: center; border: 1px solid #1f5d48; border-radius: 18px; background: #08271d; box-shadow: 0 14px 35px #0008, inset 0 0 0 5px #0d1713; }
+.logo span { color: #40d99b; font-family: "Cascadia Code", Consolas, monospace; font-size: 38px; font-weight: 800; line-height: 1; }
+.copy { display: grid; gap: 7px; }
+.eyebrow { margin: 0; color: #47cd98; font: 700 10px "Cascadia Code", Consolas, monospace; letter-spacing: .16em; }
+h1 { margin: 0; font-size: 19px; letter-spacing: -.025em; }
+.status { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 2px 0 0; color: #91a59b; font-size: 11px; }
+.status i { width: 7px; height: 7px; border-radius: 999px; background: #40d99b; box-shadow: 0 0 0 0 #40d99b99; animation: pulse 1.4s ease-out infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 8px #40d99b00; } 100% { box-shadow: 0 0 0 0 #40d99b00; } }

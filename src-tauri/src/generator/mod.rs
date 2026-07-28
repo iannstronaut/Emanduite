@@ -238,12 +238,14 @@ mod tests {
                 database_id,
                 table_id,
                 label: Some("Users".into()),
+                menu_icon: Some("Users".into()),
                 fields: BTreeMap::from([
                     (
                         "id".into(),
                         EntityFieldConfig {
                             id: uuid::Uuid::new_v4().to_string(),
                             column_id: id_column,
+                            label: None,
                             control: "number".into(),
                             show_in_list: true,
                             show_in_view: true,
@@ -259,6 +261,7 @@ mod tests {
                         EntityFieldConfig {
                             id: uuid::Uuid::new_v4().to_string(),
                             column_id: name_column,
+                            label: None,
                             control: "text".into(),
                             show_in_list: true,
                             show_in_view: true,
@@ -332,6 +335,8 @@ mod tests {
         let sidebar = fs::read_to_string(target.join("src/components/app-sidebar.tsx")).unwrap();
         assert!(sidebar.contains("usePathname"));
         assert!(sidebar.contains("pathname.startsWith"));
+        assert!(sidebar.contains("icon: Users"));
+        assert!(sidebar.contains("const Icon = item.icon"));
     }
 
     #[test]

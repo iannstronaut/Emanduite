@@ -4,6 +4,7 @@ import type { CommandError, CommandResponse } from "../contracts/commands";
 import type { ProjectSession } from "../contracts/workspace";
 import type { ProjectHealth, WorkflowDefinition, WorkflowOutputEvent, WorkflowTask, WorkflowTaskEvent } from "../contracts/workflow";
 import * as api from "../lib/tauri";
+import { useModal } from "./ModalProvider";
 
 function unwrap<T>(response: CommandResponse<T>): T {
   if (!response.ok) throw response.error;
@@ -16,6 +17,7 @@ function message(error: unknown) {
 }
 
 export function WorkflowPanel({ session, onRecover }: { session: ProjectSession; onRecover: () => Promise<unknown> }) {
+  const { confirm } = useModal();
   const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([]);
   const [tasks, setTasks] = useState<WorkflowTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState("");
@@ -71,7 +73,7 @@ export function WorkflowPanel({ session, onRecover }: { session: ProjectSession;
   };
 
   const recover = async () => {
-    if (!window.confirm("Restore the last-known-good Blueprint? The corrupt file will be archived.")) return;
+    if (!await confirm({ title: "Restore the last-known-good Blueprint?", description: "The corrupt Blueprint will be archived before the recovery snapshot replaces it.", tone: "danger", confirmLabel: "Restore snapshot" })) return;
     setBusy("recovery"); setError(null);
     try {
       const recovered = await onRecover();

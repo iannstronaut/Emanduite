@@ -35,6 +35,7 @@ export const hasSecret = (secretRef: string) =>
   command<SecretPresence>("has_secret", { secretRef });
 export const deleteSecret = (secretRef: string) =>
   command<void>("delete_secret", { secretRef });
+export const finishAppStartup = () => command<void>("finish_app_startup");
 export const listOpenAiCompatibleModels = (baseUrl: string, secretRef: string) =>
   command<string[]>("list_openai_compatible_models", { request: { baseUrl, secretRef } });
 export interface OpenAiCompatibleDesignInput {

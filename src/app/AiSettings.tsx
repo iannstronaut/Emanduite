@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { BlueprintV1 } from "../contracts/blueprint";
 import type { ProjectSession } from "../contracts/workspace";
 import * as api from "../lib/tauri";
+import { useModal } from "./ModalProvider";
 
 type Commit = (update: (blueprint: BlueprintV1) => BlueprintV1) => void;
 
@@ -29,6 +30,7 @@ function unwrap<T>(value: { ok: true; data: T } | { ok: false; error: { message:
 }
 
 export function AiSettings({ session, onCommit }: { session: ProjectSession; onCommit: Commit }) {
+  const { confirm } = useModal();
   const initial = useMemo(() => readConfig(session.blueprint), [session.blueprint]);
   const [config, setConfig] = useState<AiConfig>(initial);
   const [apiKey, setApiKey] = useState("");
@@ -66,6 +68,7 @@ export function AiSettings({ session, onCommit }: { session: ProjectSession; onC
 
   const removeKey = async () => {
     if (!config.apiKeySecretRef) return;
+    if (!await confirm({ title: "Remove stored API key?", description: "AI Design will stop using this provider until you save a new key. The key is removed from the OS keyring.", tone: "danger", confirmLabel: "Remove API key" })) return;
     setBusy(true); setError("");
     try {
       unwrap(await api.deleteSecret(config.apiKeySecretRef));

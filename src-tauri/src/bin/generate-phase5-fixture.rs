@@ -72,6 +72,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         EntityConfig {
             id: fixture_id(8),
             label: Some("Users".into()),
+            menu_icon: Some("Users".into()),
             database_id,
             table_id,
             fields: BTreeMap::from([
@@ -133,6 +134,7 @@ fn field(
     EntityFieldConfig {
         id: fixture_id(id),
         column_id: column_id.into(),
+        label: None,
         control: control.into(),
         show_in_list,
         show_in_view,

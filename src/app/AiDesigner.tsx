@@ -198,6 +198,8 @@ export function AiDesigner({ session, onPlan, onApply, onOpenSchema }: Props) {
       { id: requestId, role: "system", state: "working", message: aiConfig ? `Preparing protected Blueprint context for ${aiConfig.model}…` : "Preparing local Blueprint context…" }
     ]);
     try {
+      // Let React paint the busy state before the desktop command starts its network work.
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       setConversation((current) => current.map((item) => item.id === requestId ? { ...item, message: aiConfig ? `Request sent to ${aiConfig.model}. Waiting for its database design…` : "Creating a deterministic local database design…" } : item));
       const next = aiConfig
         ? externalDesign(unwrap(await api.generateOpenAiCompatibleDesign({
