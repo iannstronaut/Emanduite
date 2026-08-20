@@ -80,3 +80,7 @@ npm run tauri -- build --no-bundle
 
 Konteks implementasi tersedia di `docs/dev/Phase-1.md` sampai
 `docs/dev/Phase-4.md`.
+
+## Lisensi
+
+Proyek ini dilisensikan di bawah [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0-or-later).
